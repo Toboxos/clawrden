@@ -1,69 +1,119 @@
-version: "3.8"
+version: '3.8'
 
 services:
   # ─── The Warden (Supervisor) ──────────────────────────────────────────────
   warden:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.warden
+    image: alpine:latest
     container_name: clawrden-warden
-    restart: unless-stopped
-    environment:
-      - CLAWRDEN_PRISONER_ID=clawrden-prisoner
+    hostname: warden
+
+    # Mount the warden binary and dependencies
     volumes:
-      # Shared workspace
-      - app-data:/app
-      # Communication socket
-      - clawrden-socket:/var/run/clawrden
-      # Docker socket access (privileged)
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Policy configuration
+      - ./bin/clawrden-warden:/usr/local/bin/clawrden-warden:ro
       - ./policy.yaml:/etc/clawrden/policy.yaml:ro
-    networks:
-      - clawrden-net
+
+      # Shared socket directory (all prisoners will mount this)
+      - socket-dir:/var/run/clawrden
+
+      # Docker socket (for Mirror/Ghost execution)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Audit logs
+      - ./logs:/var/log/clawrden
+
+      # Shared workspace
+      - workspace:/app
+
+    # Warden needs full privileges for Docker operations
+    privileged: true
+
+    # Environment
+    environment:
+      - CLAWRDEN_PRISONER_ID=clawrden-prisoner1
+
+    # Command
     command: >
       /usr/local/bin/clawrden-warden
-      -socket /var/run/clawrden/warden.sock
-      -policy /etc/clawrden/policy.yaml
-      -prisoner-id clawrden-prisoner
+      --socket /var/run/clawrden/warden.sock
+      --policy /etc/clawrden/policy.yaml
+      --audit /var/log/clawrden/audit.log
+      --api :8080
 
-  # ─── The Prisoner (Agent Container) ──────────────────────────────────────
-  prisoner:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.prisoner
-    container_name: clawrden-prisoner
-    restart: unless-stopped
-    depends_on:
-      - warden
+    # Expose API
+    ports:
+      - "8080:8080"
+
+    # Network
+    networks:
+      - clawrden
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8080/api/status", "||", "exit", "1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ─── Prisoner 1 (Ubuntu-based agent) ──────────────────────────────────────
+  prisoner1:
+    image: clawrden-ubuntu
+    container_name: clawrden-prisoner1
+    hostname: prisoner1
+
+    # Mount shared volumes
+    volumes:
+      - socket-dir:/var/run/clawrden   # Warden socket
+      - workspace:/app                  # Shared workspace
+
+    # Environment
     environment:
       - CLAWRDEN_SOCKET=/var/run/clawrden/warden.sock
+
+    # No network access (firewalled)
+    network_mode: none
+
+    # Keep container running for interactive access
+    command: tail -f /dev/null
+
+    depends_on:
+      warden:
+        condition: service_healthy
+
+  # ─── Prisoner 2 (Alpine-based agent) ──────────────────────────────────────
+  prisoner2:
+    image: clawrden-alpine
+    container_name: clawrden-prisoner2
+    hostname: prisoner2
+
     volumes:
-      # Shared workspace
-      - app-data:/app
-      # Communication socket (read-only for the prisoner)
-      - clawrden-socket:/var/run/clawrden
-      # Shim binaries
-      - clawrden-bin:/clawrden/bin:ro
-    networks:
-      clawrden-net:
-        # No internet access for the prisoner
-    # Override the network to be internal-only
-    # The prisoner should not have external network access
-    stdin_open: true
-    tty: true
-    working_dir: /app
-    user: "1000:1000"
+      - socket-dir:/var/run/clawrden
+      - workspace:/app
 
+    environment:
+      - CLAWRDEN_SOCKET=/var/run/clawrden/warden.sock
+
+    network_mode: none
+
+    command: tail -f /dev/null
+
+    depends_on:
+      warden:
+        condition: service_healthy
+
+    # Start this container only when explicitly requested
+    profiles:
+      - multi-prisoner
+
+# ─── Named Volumes ───────────────────────────────────────────────────────────
 volumes:
-  app-data:
-    driver: local
-  clawrden-socket:
-    driver: local
-  clawrden-bin:
-    driver: local
+  socket-dir:
+    name: clawrden-socket
+  workspace:
+    name: clawrden-workspace
 
+# ─── Networks ────────────────────────────────────────────────────────────────
 networks:
-  clawrden-net:
+  clawrden:
+    name: clawrden-net
     driver: bridge
-    internal: false  # Warden needs internet; prisoner is restricted by firewall rules
