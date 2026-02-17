@@ -1,7 +1,10 @@
-.PHONY: build build-shim build-warden build-cli test lint clean integration-test
+.PHONY: build build-shim build-warden build-cli build-bridges build-slack-bridge build-telegram-bridge test lint clean integration-test
 
-# Build all binaries
+# Build all binaries (core + chat bridges)
 build: build-shim build-warden build-cli
+
+# Build all binaries including chat bridges
+build-all: build build-bridges
 
 # Build the statically-linked shim binary
 build-shim:
@@ -15,6 +18,17 @@ build-warden:
 # Build the CLI binary
 build-cli:
 	go build -o bin/clawrden-cli ./cmd/cli
+
+# Build all chat bridges
+build-bridges: build-slack-bridge build-telegram-bridge
+
+# Build Slack bridge
+build-slack-bridge:
+	go build -o bin/slack-bridge ./cmd/slack-bridge
+
+# Build Telegram bridge
+build-telegram-bridge:
+	go build -o bin/telegram-bridge ./cmd/telegram-bridge
 
 # Run all tests
 test:
