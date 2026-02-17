@@ -80,6 +80,44 @@ echo '{"command":"echo","args":["hello"],"cwd":"/tmp","env":[],"identity":{"uid"
 ./bin/clawrden-cli history
 ```
 
+## Nix Flake Support
+
+Clawrden provides a comprehensive Nix flake for reproducible builds and deployments.
+
+### Available Packages
+
+```bash
+# Build specific packages
+nix build .#shim          # Universal shim binary (2.4MB, static)
+nix build .#warden        # Warden server
+nix build .#cli           # CLI tool
+nix build .#slack-bridge  # Slack notification bridge
+nix build .#telegram-bridge  # Telegram notification bridge
+nix build .#warden-docker # Docker image tarball
+
+# Build all core binaries
+nix build
+
+# Run binaries directly without installing
+nix run .#warden -- --help
+nix run .#cli -- status
+```
+
+### Docker Image from Nix
+
+```bash
+# Build and load warden Docker image
+nix build .#warden-docker
+docker load < result
+```
+
+**See [NIX.md](./NIX.md) for complete Nix flake documentation including:**
+- Development shell usage
+- CI/CD integration examples
+- Binary cache setup
+- Comparison with Makefile targets
+- Troubleshooting guide
+
 ## Architecture
 
 ```
