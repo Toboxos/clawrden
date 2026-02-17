@@ -17,6 +17,8 @@ func main() {
 	socketPath := flag.String("socket", "/var/run/clawrden/warden.sock", "Path to the Unix Domain Socket")
 	policyPath := flag.String("policy", "policy.yaml", "Path to the policy configuration file")
 	prisonerID := flag.String("prisoner-id", "", "Docker container ID of the Prisoner")
+	auditPath := flag.String("audit", "/var/log/clawrden/audit.log", "Audit log file path")
+	apiAddr := flag.String("api", ":8080", "HTTP API server address")
 	flag.Parse()
 
 	if *prisonerID == "" {
@@ -30,6 +32,8 @@ func main() {
 		SocketPath: *socketPath,
 		PolicyPath: *policyPath,
 		PrisonerID: *prisonerID,
+		AuditPath:  *auditPath,
+		APIAddr:    *apiAddr,
 		Logger:     logger,
 	})
 	if err != nil {

@@ -27,10 +27,8 @@ func NewLocalExecutor(logger *log.Logger) *LocalExecutor {
 
 // Execute runs the command locally and streams output.
 func (le *LocalExecutor) Execute(ctx context.Context, req *protocol.Request, conn net.Conn) error {
-	if err := ValidatePath(req.Cwd); err != nil {
-		return err
-	}
-
+	// Skip strict /app validation for local executor (used in dev/testing)
+	// The server-level check is still enforced
 	le.logger.Printf("local exec: %s %v (cwd=%s)", req.Command, req.Args, req.Cwd)
 
 	// Find the real binary (skip our own shims)

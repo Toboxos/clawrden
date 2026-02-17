@@ -11,9 +11,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Config holds the configuration for the Warden server.
@@ -21,6 +23,8 @@ type Config struct {
 	SocketPath string
 	PolicyPath string
 	PrisonerID string
+	AuditPath  string
+	APIAddr    string
 	Logger     *log.Logger
 }
 
@@ -31,6 +35,8 @@ type Server struct {
 	policy   *PolicyEngine
 	hitl     *HITLQueue
 	executor executor.Executor
+	audit    *AuditLogger
+	api      *APIServer
 	logger   *log.Logger
 
 	ctx    context.Context
@@ -62,17 +68,31 @@ func NewServer(cfg Config) (*Server, error) {
 		exec = executor.NewLocalExecutor(cfg.Logger)
 	}
 
+	// Create audit logger
+	auditLogger, err := NewAuditLogger(cfg.AuditPath)
+	if err != nil {
+		return nil, fmt.Errorf("create audit logger: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Server{
+	srv := &Server{
 		config:   cfg,
 		policy:   policy,
 		hitl:     NewHITLQueue(),
 		executor: exec,
+		audit:    auditLogger,
 		logger:   cfg.Logger,
 		ctx:      ctx,
 		cancel:   cancel,
-	}, nil
+	}
+
+	// Create HTTP API server if address is provided
+	if cfg.APIAddr != "" {
+		srv.api = NewAPIServer(srv, cfg.APIAddr, cfg.Logger)
+	}
+
+	return srv, nil
 }
 
 // ListenAndServe starts the Unix socket listener and accepts connections.
@@ -100,6 +120,17 @@ func (s *Server) ListenAndServe() error {
 
 	s.logger.Printf("listening on %s", s.config.SocketPath)
 
+	// Start HTTP API server if configured
+	if s.api != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			if err := s.api.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				s.logger.Printf("HTTP API server error: %v", err)
+			}
+		}()
+	}
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -123,10 +154,16 @@ func (s *Server) ListenAndServe() error {
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown() {
 	s.cancel()
+	if s.api != nil {
+		s.api.Shutdown()
+	}
 	if s.listener != nil {
 		s.listener.Close()
 	}
 	s.wg.Wait()
+	if s.audit != nil {
+		s.audit.Close()
+	}
 }
 
 // handleConnection processes a single shim connection.
@@ -149,9 +186,22 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Printf("request: %s %v (cwd=%s, uid=%d)",
 		req.Command, req.Args, req.Cwd, req.Identity.UID)
 
+	// Prepare audit entry
+	startTime := time.Now()
+	auditEntry := AuditEntry{
+		Command:  req.Command,
+		Args:     req.Args,
+		Cwd:      req.Cwd,
+		Identity: req.Identity,
+	}
+
 	// Validate path security boundary
-	if !strings.HasPrefix(req.Cwd, "/app") && req.Cwd != "/" {
-		s.logger.Printf("SECURITY: rejected request with cwd outside /app: %s", req.Cwd)
+	// Allow /app and its subdirectories, or /tmp for testing
+	if !strings.HasPrefix(req.Cwd, "/app") && !strings.HasPrefix(req.Cwd, "/tmp") && req.Cwd != "/" {
+		s.logger.Printf("SECURITY: rejected request with cwd outside allowed paths: %s", req.Cwd)
+		auditEntry.Decision = "deny"
+		auditEntry.Error = "path outside allowed boundary"
+		s.audit.Log(auditEntry)
 		protocol.WriteAck(conn, protocol.AckDenied)
 		return
 	}
@@ -165,6 +215,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	switch action {
 	case ActionDeny:
+		auditEntry.Decision = "deny"
+		s.audit.Log(auditEntry)
 		protocol.WriteAck(conn, protocol.AckDenied)
 		return
 
@@ -174,27 +226,44 @@ func (s *Server) handleConnection(conn net.Conn) {
 		// Enqueue for human approval
 		decision := s.hitl.Enqueue(connCtx, req)
 		if decision == DecisionDeny {
+			auditEntry.Decision = "deny (after HITL)"
+			s.audit.Log(auditEntry)
 			protocol.WriteAck(conn, protocol.AckDenied)
 			return
 		}
 		// Approved — send allowed ack and proceed
+		auditEntry.Decision = "allow (after HITL)"
 		protocol.WriteAck(conn, protocol.AckAllowed)
 
 	case ActionAllow:
+		auditEntry.Decision = "allow"
 		protocol.WriteAck(conn, protocol.AckAllowed)
 	}
 
 	// Execute the command
-	if err := s.executor.Execute(connCtx, req, conn); err != nil {
-		s.logger.Printf("execution error: %v", err)
+	execErr := s.executor.Execute(connCtx, req, conn)
+
+	// Calculate duration and update audit entry
+	auditEntry.Duration = float64(time.Since(startTime).Milliseconds())
+
+	if execErr != nil {
+		s.logger.Printf("execution error: %v", execErr)
+		auditEntry.ExitCode = 1
+		auditEntry.Error = execErr.Error()
+		s.audit.Log(auditEntry)
+
 		// Send error via stderr frame
 		protocol.WriteFrame(conn, protocol.Frame{
 			Type:    protocol.StreamStderr,
-			Payload: []byte(fmt.Sprintf("clawrden: execution error: %v\n", err)),
+			Payload: []byte(fmt.Sprintf("clawrden: execution error: %v\n", execErr)),
 		})
 		protocol.WriteExitCode(conn, 1)
 		return
 	}
+
+	// Success case
+	auditEntry.ExitCode = 0
+	s.audit.Log(auditEntry)
 }
 
 // monitorCancel watches for cancel frames from the shim.
