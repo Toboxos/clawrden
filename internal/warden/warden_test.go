@@ -84,9 +84,12 @@ func TestPolicyEvaluate(t *testing.T) {
 				Cwd:      "/app",
 				Identity: protocol.Identity{UID: 1000, GID: 1000},
 			}
-			action := pe.Evaluate(req)
-			if action != tt.expected {
-				t.Errorf("command %q: got %v, want %v", tt.command, action, tt.expected)
+			result := pe.Evaluate(req)
+			if result.Action != tt.expected {
+				t.Errorf("command %q: got %v, want %v", tt.command, result.Action, tt.expected)
+			}
+			if result.Timeout == 0 {
+				t.Errorf("command %q: expected non-zero timeout", tt.command)
 			}
 		})
 	}
@@ -96,7 +99,8 @@ func TestPolicyEvaluateWithArgs(t *testing.T) {
 	// Rules are evaluated in order; deny rule for rm -rf / must come first
 	pe := &PolicyEngine{
 		config: PolicyConfig{
-			DefaultAction: ActionDeny,
+			DefaultAction:  ActionDeny,
+			DefaultTimeout: 2 * 60 * 1000000000, // 2 minutes in nanoseconds
 			Rules: []Rule{
 				{Command: "rm", Action: ActionDeny, Args: []string{"-rf /"}},
 				{Command: "rm", Action: ActionAllow, Args: []string{"-r"}},
@@ -122,9 +126,9 @@ func TestPolicyEvaluateWithArgs(t *testing.T) {
 				Cwd:      "/app",
 				Identity: protocol.Identity{UID: 1000, GID: 1000},
 			}
-			action := pe.Evaluate(req)
-			if action != tt.expected {
-				t.Errorf("command %q %v: got %v, want %v", tt.command, tt.args, action, tt.expected)
+			result := pe.Evaluate(req)
+			if result.Action != tt.expected {
+				t.Errorf("command %q %v: got %v, want %v", tt.command, tt.args, result.Action, tt.expected)
 			}
 		})
 	}

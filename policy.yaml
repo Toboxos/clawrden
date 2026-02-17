@@ -3,6 +3,7 @@
 # Default action applies when no rule matches.
 
 default_action: ask
+default_timeout: 2m  # Default timeout for all commands (2 minutes)
 
 rules:
   # === DENY: Dangerous operations (checked first) ===
@@ -73,30 +74,37 @@ rules:
   # === ASK: Operations requiring human approval ===
   - command: npm
     action: ask
+    timeout: 5m  # npm install can take a while
     reason: "Package manager operations require approval"
 
   - command: npx
     action: ask
+    timeout: 3m
     reason: "Package execution requires approval"
 
   - command: pip
     action: ask
+    timeout: 5m  # pip install can take a while
     reason: "Python package operations require approval"
 
   - command: docker
     action: ask
+    timeout: 10m  # Docker builds can be slow
     reason: "Docker operations require approval"
 
   - command: apt-get
     action: ask
+    timeout: 10m  # System updates can be slow
     reason: "System package operations require approval"
 
   - command: curl
     action: ask
+    timeout: 30s  # Network requests should be fast
     reason: "Network requests require approval"
 
   - command: wget
     action: ask
+    timeout: 30s  # Network requests should be fast
     reason: "Network requests require approval"
 
   - command: rm

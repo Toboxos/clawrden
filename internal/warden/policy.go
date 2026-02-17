@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -25,17 +26,19 @@ func (a Action) String() string {
 
 // Rule defines a single policy rule.
 type Rule struct {
-	Command string   `yaml:"command"`
-	Action  Action   `yaml:"action"`
-	Args    []string `yaml:"args,omitempty"`    // Optional: specific arg patterns
-	Reason  string   `yaml:"reason,omitempty"` // Optional: human-readable reason
+	Command string        `yaml:"command"`
+	Action  Action        `yaml:"action"`
+	Args    []string      `yaml:"args,omitempty"`    // Optional: specific arg patterns
+	Reason  string        `yaml:"reason,omitempty"`  // Optional: human-readable reason
+	Timeout time.Duration `yaml:"timeout,omitempty"` // Optional: per-command timeout (e.g., "300s", "5m")
 }
 
 // PolicyConfig is the top-level policy configuration.
 type PolicyConfig struct {
-	DefaultAction Action   `yaml:"default_action"`
-	AllowedPaths  []string `yaml:"allowed_paths,omitempty"`
-	Rules         []Rule   `yaml:"rules"`
+	DefaultAction  Action        `yaml:"default_action"`
+	DefaultTimeout time.Duration `yaml:"default_timeout,omitempty"` // Default timeout for all commands
+	AllowedPaths   []string      `yaml:"allowed_paths,omitempty"`
+	Rules          []Rule        `yaml:"rules"`
 }
 
 // PolicyEngine evaluates commands against a set of rules.
@@ -60,6 +63,11 @@ func LoadPolicy(path string) (*PolicyEngine, error) {
 		config.DefaultAction = ActionDeny
 	}
 
+	// Default timeout if not specified (2 minutes)
+	if config.DefaultTimeout == 0 {
+		config.DefaultTimeout = 2 * time.Minute
+	}
+
 	// Default allowed paths if not specified
 	if len(config.AllowedPaths) == 0 {
 		config.AllowedPaths = []string{"/app/*", "/tmp/*"}
@@ -72,8 +80,9 @@ func LoadPolicy(path string) (*PolicyEngine, error) {
 func DefaultPolicy() *PolicyEngine {
 	return &PolicyEngine{
 		config: PolicyConfig{
-			DefaultAction: ActionDeny,
-			AllowedPaths:  []string{"/app/*", "/tmp/*"},
+			DefaultAction:  ActionDeny,
+			DefaultTimeout: 2 * time.Minute,
+			AllowedPaths:   []string{"/app/*", "/tmp/*"},
 			Rules: []Rule{
 				{Command: "ls", Action: ActionAllow},
 				{Command: "cat", Action: ActionAllow},
@@ -90,8 +99,14 @@ func DefaultPolicy() *PolicyEngine {
 	}
 }
 
-// Evaluate checks a request against the policy rules and returns the appropriate action.
-func (pe *PolicyEngine) Evaluate(req *protocol.Request) Action {
+// EvaluationResult contains both the action and timeout for a request.
+type EvaluationResult struct {
+	Action  Action
+	Timeout time.Duration
+}
+
+// Evaluate checks a request against the policy rules and returns the appropriate action and timeout.
+func (pe *PolicyEngine) Evaluate(req *protocol.Request) EvaluationResult {
 	command := filepath.Base(req.Command)
 
 	for _, rule := range pe.config.Rules {
@@ -101,17 +116,34 @@ func (pe *PolicyEngine) Evaluate(req *protocol.Request) Action {
 
 		// If no specific args patterns are defined, match on command alone
 		if len(rule.Args) == 0 {
-			return rule.Action
+			timeout := rule.Timeout
+			if timeout == 0 {
+				timeout = pe.config.DefaultTimeout
+			}
+			return EvaluationResult{
+				Action:  rule.Action,
+				Timeout: timeout,
+			}
 		}
 
 		// Check if the request args match the rule's arg patterns
 		if matchArgs(rule.Args, req.Args) {
-			return rule.Action
+			timeout := rule.Timeout
+			if timeout == 0 {
+				timeout = pe.config.DefaultTimeout
+			}
+			return EvaluationResult{
+				Action:  rule.Action,
+				Timeout: timeout,
+			}
 		}
 	}
 
-	// No matching rule found — use default action
-	return pe.config.DefaultAction
+	// No matching rule found — use default action and timeout
+	return EvaluationResult{
+		Action:  pe.config.DefaultAction,
+		Timeout: pe.config.DefaultTimeout,
+	}
 }
 
 // matchCommand checks if a command matches a rule pattern.

@@ -13,15 +13,16 @@ import (
 
 // AuditEntry represents a single command execution record.
 type AuditEntry struct {
-	Timestamp string             `json:"timestamp"`
-	Command   string             `json:"command"`
-	Args      []string           `json:"args"`
-	Cwd       string             `json:"cwd"`
-	Identity  protocol.Identity  `json:"identity"`
-	Decision  string             `json:"decision"` // "allow", "deny", "ask"
-	ExitCode  int                `json:"exit_code,omitempty"`
-	Duration  float64            `json:"duration_ms,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	Timestamp        string            `json:"timestamp"`
+	Command          string            `json:"command"`
+	Args             []string          `json:"args"`
+	Cwd              string            `json:"cwd"`
+	Identity         protocol.Identity `json:"identity"`
+	Decision         string            `json:"decision"` // "allow", "deny", "ask"
+	ExitCode         int               `json:"exit_code,omitempty"`
+	Duration         float64           `json:"duration_ms,omitempty"`
+	TimeoutViolation bool              `json:"timeout_violation,omitempty"`
+	Error            string            `json:"error,omitempty"`
 }
 
 // AuditLogger writes structured audit logs in JSON-lines format.

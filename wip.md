@@ -60,9 +60,37 @@
 - Embedded in warden binary via go:embed
 - Served at http://localhost:8080/
 
-## Future (Phase 3 - Remaining)
-- Docker Compose smoke test on real Docker
-- Multi-image installer verification (Alpine, Ubuntu, python:slim)
-- Chat integration (Slack/Telegram bots)
+## Current Focus: Production POC Preparation
+
+### Just Completed ✅
+- **Production Roadmap** - Refactored plan prioritizing POC over Ghost mode
+- **Chat Integration Guide** - Quick Slack/Telegram implementation (2-4 hours per platform)
+- **Docker Testing Guide** - Complete step-by-step validation framework
+
+### Next Immediate Tasks (This Week)
+
+1. **Timeout Enforcement** (Phase 2, Step 5) ⏳
+   - Add context.WithTimeout to executors
+   - Support per-command timeouts in policy.yaml
+   - Track violations in audit log
+
+2. **Container Hardening Script** (Phase 3.1) ⏳
+   - Implement `scripts/harden-container.sh`
+   - Test on Alpine, Ubuntu, Python base images
+   - Validate binary locking mechanism
+
+3. **Docker Compose Validation** (Phase 3.1) ⏳
+   - Update docker-compose.yml with multi-prisoner setup
+   - Test socket sharing between warden and prisoners
+   - Validate network isolation
+
+4. **Chat Integration POC** (Phase 3 - Optional Quick Win)
+   - Implement Slack bridge service
+   - Test HITL approval via chat
+   - 2-4 hours implementation time
+
+### Deferred to Phase 4 (Post-POC)
+- Ghost mode (ephemeral Docker containers)
+- Ghost image configuration in policy.yaml
 - WebSocket real-time updates
-- Authentication/authorization for dashboard
+- Multi-user authentication

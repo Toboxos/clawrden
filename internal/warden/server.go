@@ -209,10 +209,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 	req.Env = ScrubEnvironment(req.Env)
 
 	// Evaluate policy
-	action := s.policy.Evaluate(req)
-	s.logger.Printf("policy decision: %s for %s", action, req.Command)
+	evalResult := s.policy.Evaluate(req)
+	s.logger.Printf("policy decision: %s for %s (timeout: %v)", evalResult.Action, req.Command, evalResult.Timeout)
 
-	switch action {
+	switch evalResult.Action {
 	case ActionDeny:
 		auditEntry.Decision = "deny"
 		s.audit.Log(auditEntry)
@@ -239,8 +239,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 		protocol.WriteAck(conn, protocol.AckAllowed)
 	}
 
-	// Execute the command
-	execErr := s.executor.Execute(connCtx, req, conn)
+	// Execute the command with timeout
+	execCtx := connCtx
+	var execCancel context.CancelFunc
+	if evalResult.Timeout > 0 {
+		execCtx, execCancel = context.WithTimeout(connCtx, evalResult.Timeout)
+		defer execCancel()
+	}
+
+	execErr := s.executor.Execute(execCtx, req, conn)
 
 	// Calculate duration and update audit entry
 	auditEntry.Duration = float64(time.Since(startTime).Milliseconds())
@@ -249,6 +256,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 		s.logger.Printf("execution error: %v", execErr)
 		auditEntry.ExitCode = 1
 		auditEntry.Error = execErr.Error()
+
+		// Check if this was a timeout violation
+		if execCtx.Err() == context.DeadlineExceeded {
+			auditEntry.TimeoutViolation = true
+			auditEntry.Error = fmt.Sprintf("timeout exceeded (%v): %v", evalResult.Timeout, execErr)
+			s.logger.Printf("TIMEOUT: command %s exceeded %v", req.Command, evalResult.Timeout)
+		}
+
 		s.audit.Log(auditEntry)
 
 		// Send error via stderr frame
