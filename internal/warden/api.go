@@ -3,6 +3,7 @@ package warden
 
 import (
 	"clawrden/pkg/protocol"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,9 @@ import (
 	"sync"
 	"time"
 )
+
+//go:embed web/dashboard.html
+var dashboardHTML string
 
 // APIServer provides HTTP endpoints for warden control.
 type APIServer struct {
@@ -28,6 +32,11 @@ func NewAPIServer(warden *Server, addr string, logger *log.Logger) *APIServer {
 	}
 
 	mux := http.NewServeMux()
+
+	// Dashboard UI
+	mux.HandleFunc("/", api.handleDashboard)
+
+	// API endpoints
 	mux.HandleFunc("/api/status", api.handleStatus)
 	mux.HandleFunc("/api/queue", api.handleQueue)
 	mux.HandleFunc("/api/queue/", api.handleQueueAction)
@@ -53,6 +62,17 @@ func (api *APIServer) ListenAndServe() error {
 // Shutdown gracefully shuts down the API server.
 func (api *APIServer) Shutdown() error {
 	return api.server.Close()
+}
+
+// handleDashboard serves the web dashboard UI.
+func (api *APIServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(dashboardHTML))
 }
 
 // handleStatus returns the current warden status.

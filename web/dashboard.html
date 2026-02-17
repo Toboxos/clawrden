@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🛡️ Clawrden Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --border: #475569;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo h1 {
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-running {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+
+        .status-error {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .refresh-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: var(--border);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .request-item {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .request-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 12px;
+        }
+
+        .request-command {
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--accent-blue);
+        }
+
+        .request-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 8px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .request-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-approve {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .btn-approve:hover {
+            background: #059669;
+        }
+
+        .btn-deny {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .btn-deny:hover {
+            background: #dc2626;
+        }
+
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .history-table th {
+            text-align: left;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .history-table td {
+            padding: 12px;
+            border-top: 1px solid var(--border);
+            font-size: 14px;
+        }
+
+        .history-table tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .code {
+            font-family: 'Courier New', monospace;
+            background: var(--bg-primary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .decision-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .decision-allow {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+
+        .decision-deny {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+
+        .decision-ask {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--accent-yellow);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg-tertiary);
+            transition: .4s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--accent-blue);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            max-width: 300px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification-success {
+            border-left: 4px solid var(--accent-green);
+        }
+
+        .notification-error {
+            border-left: 4px solid var(--accent-red);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <span style="font-size: 32px;">🛡️</span>
+                <div>
+                    <h1>Clawrden</h1>
+                    <div style="font-size: 12px; color: var(--text-secondary);">Autonomous Agent Supervisor</div>
+                </div>
+            </div>
+            <div>
+                <span class="status-badge status-running" id="statusBadge">Running</span>
+            </div>
+        </header>
+
+        <div class="grid">
+            <div class="card">
+                <div class="card-title">Pending Approvals</div>
+                <div class="card-value" id="pendingCount">-</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Commands Today</div>
+                <div class="card-value" id="commandsToday">-</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Uptime</div>
+                <div class="card-value" id="uptime">-</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">Pending Approvals</h2>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <div class="auto-refresh">
+                        <label class="switch">
+                            <input type="checkbox" id="autoRefresh" checked>
+                            <span class="slider"></span>
+                        </label>
+                        <span>Auto-refresh</span>
+                    </div>
+                    <button class="refresh-btn" onclick="loadQueue()">Refresh</button>
+                </div>
+            </div>
+            <div id="queueContainer">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">Recent Commands</h2>
+                <button class="refresh-btn" onclick="loadHistory()">Refresh</button>
+            </div>
+            <div id="historyContainer">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let autoRefreshInterval = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStatus();
+            loadQueue();
+            loadHistory();
+            setupAutoRefresh();
+        });
+
+        // Auto-refresh setup
+        function setupAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+            checkbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    startAutoRefresh();
+                } else {
+                    stopAutoRefresh();
+                }
+            });
+            startAutoRefresh();
+        }
+
+        function startAutoRefresh() {
+            stopAutoRefresh();
+            autoRefreshInterval = setInterval(() => {
+                loadStatus();
+                loadQueue();
+            }, 2000); // Refresh every 2 seconds
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+        }
+
+        // Load status
+        async function loadStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/api/status`);
+                const data = await response.json();
+
+                document.getElementById('pendingCount').textContent = data.pending_count || 0;
+                document.getElementById('statusBadge').textContent = data.status || 'Unknown';
+                document.getElementById('statusBadge').className =
+                    `status-badge ${data.status === 'running' ? 'status-running' : 'status-error'}`;
+            } catch (error) {
+                console.error('Failed to load status:', error);
+                document.getElementById('statusBadge').textContent = 'Error';
+                document.getElementById('statusBadge').className = 'status-badge status-error';
+            }
+        }
+
+        // Load queue
+        async function loadQueue() {
+            try {
+                const response = await fetch(`${API_BASE}/api/queue`);
+                const queue = await response.json();
+
+                const container = document.getElementById('queueContainer');
+
+                if (!queue || queue.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No pending approvals</div>';
+                    return;
+                }
+
+                container.innerHTML = queue.map(req => `
+                    <div class="request-item">
+                        <div class="request-header">
+                            <div class="request-command">${escapeHtml(req.command)} ${(req.args || []).map(escapeHtml).join(' ')}</div>
+                        </div>
+                        <div class="request-meta">
+                            <div><strong>Path:</strong> <span class="code">${escapeHtml(req.cwd)}</span></div>
+                            <div><strong>User:</strong> <span class="code">uid:${req.identity.uid}</span></div>
+                            <div><strong>ID:</strong> <span class="code">${escapeHtml(req.id)}</span></div>
+                        </div>
+                        <div class="request-actions">
+                            <button class="btn btn-approve" onclick="approveRequest('${escapeHtml(req.id)}')">
+                                ✓ Approve
+                            </button>
+                            <button class="btn btn-deny" onclick="denyRequest('${escapeHtml(req.id)}')">
+                                ✗ Deny
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load queue:', error);
+                document.getElementById('queueContainer').innerHTML =
+                    '<div class="empty-state">Failed to load queue</div>';
+            }
+        }
+
+        // Load history
+        async function loadHistory() {
+            try {
+                const response = await fetch(`${API_BASE}/api/history`);
+                const history = await response.json();
+
+                const container = document.getElementById('historyContainer');
+
+                // Count commands today
+                const today = new Date().toDateString();
+                const todayCount = history.filter(entry => {
+                    const entryDate = new Date(entry.timestamp).toDateString();
+                    return entryDate === today;
+                }).length;
+                document.getElementById('commandsToday').textContent = todayCount;
+
+                if (!history || history.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No command history</div>';
+                    return;
+                }
+
+                // Show last 20 entries
+                const recent = history.slice(-20).reverse();
+
+                container.innerHTML = `
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Command</th>
+                                <th>Decision</th>
+                                <th>Exit</th>
+                                <th>Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${recent.map(entry => `
+                                <tr>
+                                    <td>${formatTime(entry.timestamp)}</td>
+                                    <td><span class="code">${escapeHtml(entry.command)} ${(entry.args || []).map(escapeHtml).join(' ')}</span></td>
+                                    <td><span class="decision-badge ${getDecisionClass(entry.decision)}">${escapeHtml(entry.decision)}</span></td>
+                                    <td>${entry.exit_code !== undefined ? entry.exit_code : '-'}</td>
+                                    <td>${entry.duration_ms ? Math.round(entry.duration_ms) + 'ms' : '-'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (error) {
+                console.error('Failed to load history:', error);
+                document.getElementById('historyContainer').innerHTML =
+                    '<div class="empty-state">Failed to load history</div>';
+            }
+        }
+
+        // Approve request
+        async function approveRequest(id) {
+            try {
+                const response = await fetch(`${API_BASE}/api/queue/${id}/approve`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showNotification('Request approved', 'success');
+                    loadQueue();
+                    loadHistory();
+                } else {
+                    showNotification('Failed to approve request', 'error');
+                }
+            } catch (error) {
+                console.error('Failed to approve:', error);
+                showNotification('Failed to approve request', 'error');
+            }
+        }
+
+        // Deny request
+        async function denyRequest(id) {
+            try {
+                const response = await fetch(`${API_BASE}/api/queue/${id}/deny`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showNotification('Request denied', 'success');
+                    loadQueue();
+                    loadHistory();
+                } else {
+                    showNotification('Failed to deny request', 'error');
+                }
+            } catch (error) {
+                console.error('Failed to deny:', error);
+                showNotification('Failed to deny request', 'error');
+            }
+        }
+
+        // Utilities
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString();
+        }
+
+        function getDecisionClass(decision) {
+            if (!decision) return '';
+            if (decision.includes('allow')) return 'decision-allow';
+            if (decision.includes('deny')) return 'decision-deny';
+            return 'decision-ask';
+        }
+
+        function showNotification(message, type) {
+            const notification = document.createElement('div');
+            notification.className = `notification notification-${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

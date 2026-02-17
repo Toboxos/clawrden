@@ -48,18 +48,23 @@ This creates three binaries in `bin/`:
   --api :8080
 ```
 
-**Terminal 2: Test with CLI**
+**Terminal 2: Open Web Dashboard**
 
 ```bash
-# Check warden status
+# Open in your browser
+open http://localhost:8080
+
+# Or use the CLI
 ./bin/clawrden-cli --api http://localhost:8080 status
-
-# View command history (empty at first)
 ./bin/clawrden-cli history
-
-# View pending approvals
 ./bin/clawrden-cli queue
 ```
+
+The web dashboard provides:
+- 📊 Real-time status monitoring
+- ✅ One-click approve/deny for pending requests
+- 📜 Command history with filtering
+- 🔄 Auto-refresh (2s intervals)
 
 **Terminal 3: Simulate Agent Commands**
 
@@ -503,7 +508,7 @@ Allow devs to work freely but require approval for production access.
   - [ ] Ghost image configuration
 
 - [ ] Phase 3: Production Readiness
-  - [ ] Web dashboard (in progress)
+  - [x] Web dashboard
   - [ ] Docker Compose validation
   - [ ] Multi-distro testing
   - [ ] Metrics/monitoring

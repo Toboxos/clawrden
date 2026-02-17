@@ -49,8 +49,20 @@
 - Move hardcoded image map to policy.yaml
 - Support custom tool → image mappings
 
-## Future (Phase 3)
-- Web Dashboard UI
+## Completed (Phase 3 - Partial) ✅
+
+### Web Dashboard UI ✅
+- Real-time status monitoring (auto-refresh every 2s)
+- One-click approve/deny for HITL requests
+- Command history viewer (last 20 commands)
+- Dark theme optimized for extended viewing
+- Pure HTML/CSS/JS (no build dependencies)
+- Embedded in warden binary via go:embed
+- Served at http://localhost:8080/
+
+## Future (Phase 3 - Remaining)
 - Docker Compose smoke test on real Docker
 - Multi-image installer verification (Alpine, Ubuntu, python:slim)
 - Chat integration (Slack/Telegram bots)
+- WebSocket real-time updates
+- Authentication/authorization for dashboard
