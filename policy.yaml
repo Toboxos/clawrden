@@ -1,0 +1,120 @@
+# Clawrden Policy Configuration
+# Commands are evaluated top-to-bottom; first match wins.
+# Default action applies when no rule matches.
+
+default_action: deny
+
+rules:
+  # === DENY: Dangerous operations (checked first) ===
+  - command: rm
+    action: deny
+    args: ["-rf /", "-rf /*"]
+    reason: "Destructive filesystem operations"
+
+  - command: shutdown
+    action: deny
+    reason: "System shutdown not permitted"
+
+  - command: reboot
+    action: deny
+    reason: "System reboot not permitted"
+
+  - command: mkfs
+    action: deny
+    reason: "Filesystem formatting not permitted"
+
+  - command: dd
+    action: deny
+    reason: "Raw disk operations not permitted"
+
+  # === ALLOW: Safe, read-only operations ===
+  - command: ls
+    action: allow
+
+  - command: cat
+    action: allow
+
+  - command: head
+    action: allow
+
+  - command: tail
+    action: allow
+
+  - command: grep
+    action: allow
+
+  - command: echo
+    action: allow
+
+  - command: pwd
+    action: allow
+
+  - command: wc
+    action: allow
+
+  - command: find
+    action: allow
+
+  - command: which
+    action: allow
+
+  - command: env
+    action: allow
+
+  - command: whoami
+    action: allow
+
+  - command: date
+    action: allow
+
+  - command: uname
+    action: allow
+
+  # === ASK: Operations requiring human approval ===
+  - command: npm
+    action: ask
+    reason: "Package manager operations require approval"
+
+  - command: npx
+    action: ask
+    reason: "Package execution requires approval"
+
+  - command: pip
+    action: ask
+    reason: "Python package operations require approval"
+
+  - command: docker
+    action: ask
+    reason: "Docker operations require approval"
+
+  - command: apt-get
+    action: ask
+    reason: "System package operations require approval"
+
+  - command: curl
+    action: ask
+    reason: "Network requests require approval"
+
+  - command: wget
+    action: ask
+    reason: "Network requests require approval"
+
+  - command: rm
+    action: ask
+    reason: "File deletion requires approval"
+
+  - command: mv
+    action: ask
+    reason: "File move requires approval"
+
+  - command: cp
+    action: ask
+    reason: "File copy requires approval"
+
+  - command: chmod
+    action: ask
+    reason: "Permission changes require approval"
+
+  - command: chown
+    action: ask
+    reason: "Ownership changes require approval"

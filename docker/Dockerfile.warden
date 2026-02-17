@@ -1,0 +1,36 @@
+# ─── Stage 1: Build the Warden binary ────────────────────────────────────────
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /build
+
+# Copy Go module files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the warden binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /build/bin/clawrden-warden ./cmd/warden
+
+# Build the shim binary (for injection into the prisoner)
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /build/bin/clawrden-shim ./cmd/shim
+
+# ─── Stage 2: Minimal runtime ─────────────────────────────────────────────────
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates docker-cli
+
+# Create runtime directories
+RUN mkdir -p /var/run/clawrden /clawrden/bin
+
+# Copy binaries
+COPY --from=builder /build/bin/clawrden-warden /usr/local/bin/clawrden-warden
+COPY --from=builder /build/bin/clawrden-shim /clawrden/bin/clawrden-shim
+
+# Copy default policy
+COPY policy.yaml /etc/clawrden/policy.yaml
+
+ENTRYPOINT ["/usr/local/bin/clawrden-warden"]

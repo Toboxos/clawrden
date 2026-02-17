@@ -1,0 +1,69 @@
+version: "3.8"
+
+services:
+  # ─── The Warden (Supervisor) ──────────────────────────────────────────────
+  warden:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.warden
+    container_name: clawrden-warden
+    restart: unless-stopped
+    environment:
+      - CLAWRDEN_PRISONER_ID=clawrden-prisoner
+    volumes:
+      # Shared workspace
+      - app-data:/app
+      # Communication socket
+      - clawrden-socket:/var/run/clawrden
+      # Docker socket access (privileged)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Policy configuration
+      - ./policy.yaml:/etc/clawrden/policy.yaml:ro
+    networks:
+      - clawrden-net
+    command: >
+      /usr/local/bin/clawrden-warden
+      -socket /var/run/clawrden/warden.sock
+      -policy /etc/clawrden/policy.yaml
+      -prisoner-id clawrden-prisoner
+
+  # ─── The Prisoner (Agent Container) ──────────────────────────────────────
+  prisoner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.prisoner
+    container_name: clawrden-prisoner
+    restart: unless-stopped
+    depends_on:
+      - warden
+    environment:
+      - CLAWRDEN_SOCKET=/var/run/clawrden/warden.sock
+    volumes:
+      # Shared workspace
+      - app-data:/app
+      # Communication socket (read-only for the prisoner)
+      - clawrden-socket:/var/run/clawrden
+      # Shim binaries
+      - clawrden-bin:/clawrden/bin:ro
+    networks:
+      clawrden-net:
+        # No internet access for the prisoner
+    # Override the network to be internal-only
+    # The prisoner should not have external network access
+    stdin_open: true
+    tty: true
+    working_dir: /app
+    user: "1000:1000"
+
+volumes:
+  app-data:
+    driver: local
+  clawrden-socket:
+    driver: local
+  clawrden-bin:
+    driver: local
+
+networks:
+  clawrden-net:
+    driver: bridge
+    internal: false  # Warden needs internet; prisoner is restricted by firewall rules

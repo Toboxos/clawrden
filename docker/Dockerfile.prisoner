@@ -1,0 +1,33 @@
+# ─── Prisoner Container ──────────────────────────────────────────────────────
+# This is the untrusted agent container. The Clawrden shim is injected
+# to intercept tool calls and route them to the Warden.
+FROM ubuntu:22.04
+
+# Create the agent user
+RUN groupadd -g 1000 agent && \
+    useradd -u 1000 -g 1000 -m -s /bin/bash agent
+
+# Install minimal tools the agent needs
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        vim-tiny \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and run the installer
+COPY scripts/install-clawrden.sh /tmp/install-clawrden.sh
+COPY bin/clawrden-shim /tmp/clawrden-shim
+RUN chmod +x /tmp/install-clawrden.sh && \
+    /tmp/install-clawrden.sh --user 1000 --lock-binaries "npm,docker,pip,kubectl" && \
+    rm -f /tmp/install-clawrden.sh /tmp/clawrden-shim
+
+# Create workspace
+RUN mkdir -p /app && chown 1000:1000 /app
+
+# Switch to the agent user
+USER agent
+WORKDIR /app
+
+CMD ["/bin/bash"]
