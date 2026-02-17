@@ -33,8 +33,9 @@ type Rule struct {
 
 // PolicyConfig is the top-level policy configuration.
 type PolicyConfig struct {
-	DefaultAction Action `yaml:"default_action"`
-	Rules         []Rule `yaml:"rules"`
+	DefaultAction Action   `yaml:"default_action"`
+	AllowedPaths  []string `yaml:"allowed_paths,omitempty"`
+	Rules         []Rule   `yaml:"rules"`
 }
 
 // PolicyEngine evaluates commands against a set of rules.
@@ -59,6 +60,11 @@ func LoadPolicy(path string) (*PolicyEngine, error) {
 		config.DefaultAction = ActionDeny
 	}
 
+	// Default allowed paths if not specified
+	if len(config.AllowedPaths) == 0 {
+		config.AllowedPaths = []string{"/app/*", "/tmp/*"}
+	}
+
 	return &PolicyEngine{config: config}, nil
 }
 
@@ -67,6 +73,7 @@ func DefaultPolicy() *PolicyEngine {
 	return &PolicyEngine{
 		config: PolicyConfig{
 			DefaultAction: ActionDeny,
+			AllowedPaths:  []string{"/app/*", "/tmp/*"},
 			Rules: []Rule{
 				{Command: "ls", Action: ActionAllow},
 				{Command: "cat", Action: ActionAllow},
@@ -132,4 +139,44 @@ func matchArgs(patterns, args []string) bool {
 		}
 	}
 	return false
+}
+
+// ValidatePath checks if the given path matches any of the allowed path patterns.
+// Patterns support glob syntax:
+//   - "/app/*" matches anything under /app
+//   - "/home/*/workspace/*" matches user workspace directories
+//   - "/tmp/*" matches anything under /tmp
+//
+// Returns nil if path is allowed, error otherwise.
+func (pe *PolicyEngine) ValidatePath(path string) error {
+	if len(pe.config.AllowedPaths) == 0 {
+		// No restrictions
+		return nil
+	}
+
+	// Normalize path (remove trailing slashes, resolve ..)
+	path = filepath.Clean(path)
+
+	for _, pattern := range pe.config.AllowedPaths {
+		// Try glob match first
+		matched, err := filepath.Match(pattern, path)
+		if err == nil && matched {
+			return nil
+		}
+
+		// Also try prefix matching for patterns ending with /*
+		if strings.HasSuffix(pattern, "/*") {
+			prefix := strings.TrimSuffix(pattern, "/*")
+			if strings.HasPrefix(path, prefix+"/") || path == prefix {
+				return nil
+			}
+		}
+
+		// Exact match
+		if path == pattern {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("path %q not allowed by policy (allowed patterns: %v)", path, pe.config.AllowedPaths)
 }

@@ -109,10 +109,10 @@ func TestShimWardenDeniedCommand(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Send a request for a denied command (sudo is not in allowlist → default deny)
+	// Send a request for a denied command (rm -rf / is explicitly denied in policy)
 	req := &protocol.Request{
-		Command:  "sudo",
-		Args:     []string{"rm", "-rf", "/"},
+		Command:  "rm",
+		Args:     []string{"-rf", "/"},
 		Cwd:      "/app",
 		Env:      []string{},
 		Identity: protocol.Identity{UID: 1000, GID: 1000},

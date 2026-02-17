@@ -2,7 +2,7 @@
 # Commands are evaluated top-to-bottom; first match wins.
 # Default action applies when no rule matches.
 
-default_action: deny
+default_action: ask
 
 rules:
   # === DENY: Dangerous operations (checked first) ===

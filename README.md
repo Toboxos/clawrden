@@ -229,6 +229,12 @@ Agent calls: npm install express
 # Default action for unknown commands
 default_action: deny
 
+# Path restrictions - glob patterns for allowed directories
+allowed_paths:
+  - "/app/*"                  # Allow anything under /app
+  - "/tmp/*"                  # Allow /tmp for testing
+  - "/home/*/workspace/*"     # Allow user workspaces
+
 # Command rules
 rules:
   # Pattern 1: Simple allow/deny

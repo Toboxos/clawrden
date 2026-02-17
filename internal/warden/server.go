@@ -195,12 +195,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 		Identity: req.Identity,
 	}
 
-	// Validate path security boundary
-	// Allow /app and its subdirectories, or /tmp for testing
-	if !strings.HasPrefix(req.Cwd, "/app") && !strings.HasPrefix(req.Cwd, "/tmp") && req.Cwd != "/" {
-		s.logger.Printf("SECURITY: rejected request with cwd outside allowed paths: %s", req.Cwd)
-		auditEntry.Decision = "deny"
-		auditEntry.Error = "path outside allowed boundary"
+	// Validate path security boundary using policy
+	if err := s.policy.ValidatePath(req.Cwd); err != nil {
+		s.logger.Printf("SECURITY: %v", err)
+		auditEntry.Decision = "deny (path violation)"
+		auditEntry.Error = err.Error()
 		s.audit.Log(auditEntry)
 		protocol.WriteAck(conn, protocol.AckDenied)
 		return
