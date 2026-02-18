@@ -42,6 +42,8 @@ func NewAPIServer(warden *Server, addr string, logger *log.Logger) *APIServer {
 	mux.HandleFunc("/api/queue/", api.handleQueueAction)
 	mux.HandleFunc("/api/history", api.handleHistory)
 	mux.HandleFunc("/api/kill", api.handleKill)
+	mux.HandleFunc("/api/jails", api.handleJails)
+	mux.HandleFunc("/api/jails/", api.handleJailByID)
 
 	api.server = &http.Server{
 		Addr:         addr,
@@ -199,4 +201,104 @@ func (api *APIServer) handleKill(w http.ResponseWriter, r *http.Request) {
 		"status":  "acknowledged",
 		"message": "Kill switch not yet implemented in executor",
 	})
+}
+
+// handleJails lists all jails or creates a new one.
+func (api *APIServer) handleJails(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		api.listJails(w, r)
+	case http.MethodPost:
+		api.createJail(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// listJails returns all active jails.
+func (api *APIServer) listJails(w http.ResponseWriter, r *http.Request) {
+	jailhouse := api.warden.GetJailhouse()
+	if jailhouse == nil {
+		http.Error(w, "Jailhouse not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	jails := jailhouse.ListJails()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(jails)
+}
+
+// createJail creates a new jail.
+func (api *APIServer) createJail(w http.ResponseWriter, r *http.Request) {
+	jailhouse := api.warden.GetJailhouse()
+	if jailhouse == nil {
+		http.Error(w, "Jailhouse not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		JailID   string   `json:"jail_id"`
+		Commands []string `json:"commands"`
+		Hardened bool     `json:"hardened"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.JailID == "" {
+		http.Error(w, "jail_id is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Commands) == 0 {
+		http.Error(w, "commands is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := jailhouse.CreateJail(req.JailID, req.Commands, req.Hardened); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create jail: %v", err), http.StatusConflict)
+		return
+	}
+
+	api.logger.Printf("created jail %s via API: %v", req.JailID, req.Commands)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "created", "jail_id": req.JailID})
+}
+
+// handleJailByID handles GET and DELETE for a specific jail.
+func (api *APIServer) handleJailByID(w http.ResponseWriter, r *http.Request) {
+	jailhouse := api.warden.GetJailhouse()
+	if jailhouse == nil {
+		http.Error(w, "Jailhouse not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	jailID := strings.TrimPrefix(r.URL.Path, "/api/jails/")
+	if jailID == "" {
+		http.Error(w, "jail ID is required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		jail, err := jailhouse.GetJail(jailID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Jail not found: %v", err), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jail)
+
+	case http.MethodDelete:
+		if err := jailhouse.DestroyJail(jailID); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to delete jail: %v", err), http.StatusNotFound)
+			return
+		}
+		api.logger.Printf("deleted jail %s via API", jailID)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "jail_id": jailID})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }

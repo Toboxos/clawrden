@@ -5,6 +5,17 @@
 default_action: ask
 default_timeout: 2m  # Default timeout for all commands (2 minutes)
 
+# Jail definitions: each jail creates a shim directory with symlinks
+# for the listed commands. Mount the jail directory into your container
+# and set PATH to include it (e.g., /var/lib/clawrden/jailhouse/my-agent/bin).
+jails:
+  my-agent:
+    commands: [ls, cat, npm, docker, kubectl]
+    hardened: true
+  python-agent:
+    commands: [ls, cat, pip, python]
+    hardened: false
+
 rules:
   # === DENY: Dangerous operations (checked first) ===
   - command: rm

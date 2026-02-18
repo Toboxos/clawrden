@@ -75,7 +75,8 @@ Stream types: 1=stdout, 2=stderr, 3=exit, 4=cancel
 ├── internal/
 │   ├── shim/             # Shim logic (socket dial, signal handling)
 │   ├── warden/           # Server, policy, HITL queue, env scrubber
-│   └── executor/         # Docker SDK wrappers (Mirror, Ghost, Local)
+│   ├── executor/         # Docker SDK wrappers (Mirror, Ghost, Local)
+│   └── jailhouse/        # Jail filesystem management (shim symlink trees)
 ├── pkg/
 │   └── protocol/         # Shared types and framing protocol
 ├── scripts/

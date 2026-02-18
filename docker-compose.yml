@@ -1,18 +1,24 @@
 version: '3.8'
 
 services:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DEPLOYMENT OPTION 1: SEPARATE CONTAINERS (Recommended for Production)
+  # ═══════════════════════════════════════════════════════════════════════════
+
   # ─── The Warden (Supervisor) ──────────────────────────────────────────────
   warden:
-    image: alpine:latest
+    image: clawrden-warden:latest
     container_name: clawrden-warden
     hostname: warden
 
-    # Mount the warden binary and dependencies
+    # Run only warden service from multi-service image
+    command: ["warden"]
+
+    # Mount dependencies
     volumes:
-      - ./bin/clawrden-warden:/usr/local/bin/clawrden-warden:ro
       - ./policy.yaml:/etc/clawrden/policy.yaml:ro
 
-      # Shared socket directory (all prisoners will mount this)
+      # Shared socket directory (all prisoners and bridges will mount this)
       - socket-dir:/var/run/clawrden
 
       # Docker socket (for Mirror/Ghost execution)
@@ -24,20 +30,11 @@ services:
       # Shared workspace
       - workspace:/app
 
+      # Jailhouse directories (warden creates jail dirs here)
+      - jailhouse-data:/var/lib/clawrden
+
     # Warden needs full privileges for Docker operations
     privileged: true
-
-    # Environment
-    environment:
-      - CLAWRDEN_PRISONER_ID=clawrden-prisoner1
-
-    # Command
-    command: >
-      /usr/local/bin/clawrden-warden
-      --socket /var/run/clawrden/warden.sock
-      --policy /etc/clawrden/policy.yaml
-      --audit /var/log/clawrden/audit.log
-      --api :8080
 
     # Expose API
     ports:
@@ -55,6 +52,55 @@ services:
       retries: 3
       start_period: 5s
 
+  # ─── Slack Bridge ─────────────────────────────────────────────────────────
+  slack-bridge:
+    image: clawrden-warden:latest
+    container_name: clawrden-slack-bridge
+    hostname: slack-bridge
+
+    # Run only slack service from multi-service image
+    command: ["slack"]
+
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+
+    networks:
+      - clawrden
+
+    depends_on:
+      warden:
+        condition: service_healthy
+
+  # ─── Telegram Bridge ──────────────────────────────────────────────────────
+  telegram-bridge:
+    image: clawrden-warden:latest
+    container_name: clawrden-telegram-bridge
+    hostname: telegram-bridge
+
+    # Run only telegram service from multi-service image
+    command: ["telegram"]
+
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+
+    networks:
+      - clawrden
+
+    depends_on:
+      warden:
+        condition: service_healthy
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PRISONERS
+  #
+  # Each prisoner mounts the jailhouse volume (read-only) and sets PATH to
+  # include its jail's bin directory. The jail ID in the PATH must match
+  # a jail defined in policy.yaml (e.g., "my-agent" or "python-agent").
+  # ═══════════════════════════════════════════════════════════════════════════
+
   # ─── Prisoner 1 (Ubuntu-based agent) ──────────────────────────────────────
   prisoner1:
     image: clawrden-ubuntu
@@ -63,11 +109,13 @@ services:
 
     # Mount shared volumes
     volumes:
-      - socket-dir:/var/run/clawrden   # Warden socket
-      - workspace:/app                  # Shared workspace
+      - jailhouse-data:/var/lib/clawrden:ro  # Jail shim directory (read-only)
+      - socket-dir:/var/run/clawrden         # Warden socket
+      - workspace:/app                        # Shared workspace
 
-    # Environment
+    # PATH includes the jail's bin dir so shim symlinks take precedence
     environment:
+      - PATH=/var/lib/clawrden/jailhouse/my-agent/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - CLAWRDEN_SOCKET=/var/run/clawrden/warden.sock
 
     # No network access (firewalled)
@@ -87,10 +135,12 @@ services:
     hostname: prisoner2
 
     volumes:
+      - jailhouse-data:/var/lib/clawrden:ro
       - socket-dir:/var/run/clawrden
       - workspace:/app
 
     environment:
+      - PATH=/var/lib/clawrden/jailhouse/python-agent/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - CLAWRDEN_SOCKET=/var/run/clawrden/warden.sock
 
     network_mode: none
@@ -111,6 +161,8 @@ volumes:
     name: clawrden-socket
   workspace:
     name: clawrden-workspace
+  jailhouse-data:
+    name: clawrden-jailhouse
 
 # ─── Networks ────────────────────────────────────────────────────────────────
 networks:

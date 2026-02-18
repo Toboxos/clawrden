@@ -11,101 +11,81 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Common version information
+        # Common version information - SINGLE SOURCE OF TRUTH
         version = "0.1.0";
 
-        # Common build inputs for all Go packages
-        buildGoModule = pkgs.buildGoModule.override {
-          go = pkgs.go;
+        # Common vendorHash - SINGLE SOURCE OF TRUTH
+        # Update with: nix build 2>&1 | grep "got:" | awk '{print $2}'
+        vendorHash = "sha256-QJIBRnIhr4C5i2TwFSvXtcaihzVBvkrjhOKxzYGaC94=";
+
+        # Base derivation that builds all binaries using Make
+        # This delegates to Makefile for build logic while using buildGoModule for deps
+        clawrden-build = pkgs.buildGoModule {
+          pname = "clawrden";
+          inherit version;
+          src = ./.;
+          inherit vendorHash;
+
+          nativeBuildInputs = [ pkgs.gnumake ];
+
+          # Override the default Go build to use Make instead
+          buildPhase = ''
+            runHook preBuild
+
+            # Makefile is the source of truth for build logic
+            make build-all
+
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+
+            mkdir -p $out/bin
+            cp bin/* $out/bin/
+
+            runHook postInstall
+          '';
+
+          # Don't check subPackages since we're building everything
+          subPackages = null;
+
+          meta = {
+            description = "Clawrden - The Hypervisor for Autonomous Agents";
+            platforms = pkgs.lib.platforms.linux;
+          };
         };
       in
       {
         packages = {
-          # Statically-linked shim binary (matches: make build-shim)
-          shim = buildGoModule {
-            pname = "clawrden-shim";
-            inherit version;
-            src = ./.;
+          # Individual binaries extracted from main build
+          shim = pkgs.runCommand "clawrden-shim" {} ''
+            mkdir -p $out/bin
+            cp ${clawrden-build}/bin/clawrden-shim $out/bin/
+          '';
 
-            vendorHash = "sha256-QJIBRnIhr4C5i2TwFSvXtcaihzVBvkrjhOKxzYGaC94=";
+          warden = pkgs.runCommand "clawrden-warden" {} ''
+            mkdir -p $out/bin
+            cp ${clawrden-build}/bin/clawrden-warden $out/bin/
+          '';
 
-            # Static linking for universal compatibility
-            env.CGO_ENABLED = "0";
-            ldflags = [ "-s" "-w" ];
+          cli = pkgs.runCommand "clawrden-cli" {} ''
+            mkdir -p $out/bin
+            cp ${clawrden-build}/bin/clawrden-cli $out/bin/
+          '';
 
-            subPackages = [ "cmd/shim" ];
+          slack-bridge = pkgs.runCommand "slack-bridge" {} ''
+            mkdir -p $out/bin
+            cp ${clawrden-build}/bin/slack-bridge $out/bin/
+          '';
 
-            meta = {
-              description = "Universal shim binary for command interception";
-              mainProgram = "shim";
-            };
-          };
+          telegram-bridge = pkgs.runCommand "telegram-bridge" {} ''
+            mkdir -p $out/bin
+            cp ${clawrden-build}/bin/telegram-bridge $out/bin/
+          '';
 
-          # Warden server binary (matches: make build-warden)
-          warden = buildGoModule {
-            pname = "clawrden-warden";
-            inherit version;
-            src = ./.;
-
-            vendorHash = "sha256-QJIBRnIhr4C5i2TwFSvXtcaihzVBvkrjhOKxzYGaC94=";
-
-            subPackages = [ "cmd/warden" ];
-
-            meta = {
-              description = "Clawrden warden server with policy engine and HITL queue";
-              mainProgram = "warden";
-            };
-          };
-
-          # CLI tool (matches: make build-cli)
-          cli = buildGoModule {
-            pname = "clawrden-cli";
-            inherit version;
-            src = ./.;
-
-            vendorHash = "sha256-QJIBRnIhr4C5i2TwFSvXtcaihzVBvkrjhOKxzYGaC94=";
-
-            subPackages = [ "cmd/cli" ];
-
-            meta = {
-              description = "CLI tool for managing Clawrden warden";
-              mainProgram = "cli";
-            };
-          };
-
-          # Slack bridge (matches: make build-slack-bridge)
-          slack-bridge = buildGoModule {
-            pname = "slack-bridge";
-            inherit version;
-            src = ./.;
-
-            vendorHash = "sha256-QJIBRnIhr4C5i2TwFSvXtcaihzVBvkrjhOKxzYGaC94=";
-
-            subPackages = [ "cmd/slack-bridge" ];
-
-            meta = {
-              description = "Slack notification bridge for Clawrden HITL approvals";
-              mainProgram = "slack-bridge";
-            };
-          };
-
-          # Telegram bridge (matches: make build-telegram-bridge)
-          telegram-bridge = buildGoModule {
-            pname = "telegram-bridge";
-            inherit version;
-            src = ./.;
-
-            vendorHash = "sha256-QJIBRnIhr4C5i2TwFSvXtcaihzVBvkrjhOKxzYGaC94=";
-
-            subPackages = [ "cmd/telegram-bridge" ];
-
-            meta = {
-              description = "Telegram notification bridge for Clawrden HITL approvals";
-              mainProgram = "telegram-bridge";
-            };
-          };
-
-          # Docker image for warden (matches docker-compose.yml configuration)
+          # Docker image with all services (warden + bridges)
+          # Can run single service or multiple services in one container
           warden-docker = pkgs.dockerTools.buildLayeredImage {
             name = "clawrden-warden";
             tag = "latest";
@@ -114,17 +94,55 @@
               # Base Alpine-like minimal packages
               busybox
               wget  # For healthcheck
+              # All binaries in single image
               self.packages.${system}.warden
+              self.packages.${system}.slack-bridge
+              self.packages.${system}.telegram-bridge
             ];
 
             config = {
-              Cmd = [
-                "${self.packages.${system}.warden}/bin/clawrden-warden"
-                "--socket" "/var/run/clawrden/warden.sock"
-                "--policy" "/etc/clawrden/policy.yaml"
-                "--audit" "/var/log/clawrden/audit.log"
-                "--api" ":8080"
-              ];
+              Entrypoint = [ "${pkgs.writeScript "entrypoint.sh" ''
+                #!/bin/sh
+                set -e
+
+                # Multi-service support: launch all requested services
+                PIDS=""
+                trap 'kill $PIDS 2>/dev/null; exit' TERM INT
+
+                for service in "$@"; do
+                  case "$service" in
+                    warden)
+                      ${self.packages.${system}.warden}/bin/clawrden-warden \
+                        --socket /var/run/clawrden/warden.sock \
+                        --policy /etc/clawrden/policy.yaml \
+                        --audit /var/log/clawrden/audit.log \
+                        --api :8080 &
+                      PIDS="$PIDS $!"
+                      ;;
+                    slack)
+                      ${self.packages.${system}.slack-bridge}/bin/slack-bridge \
+                        --warden-url http://localhost:8080 &
+                      PIDS="$PIDS $!"
+                      ;;
+                    telegram)
+                      ${self.packages.${system}.telegram-bridge}/bin/telegram-bridge \
+                        --warden-url http://localhost:8080 &
+                      PIDS="$PIDS $!"
+                      ;;
+                    *)
+                      echo "Unknown service: $service"
+                      echo "Usage: $0 [warden] [slack] [telegram]"
+                      exit 1
+                      ;;
+                  esac
+                done
+
+                # Wait for all background processes
+                [ -z "$PIDS" ] && { echo "No services specified"; exit 1; }
+                wait $PIDS
+              ''}" ];
+
+              Cmd = [ "warden" ];  # Default: warden only
 
               ExposedPorts = {
                 "8080/tcp" = {};
@@ -138,21 +156,14 @@
 
               Labels = {
                 "org.opencontainers.image.title" = "Clawrden Warden";
-                "org.opencontainers.image.description" = "The Hypervisor for Autonomous Agents";
+                "org.opencontainers.image.description" = "The Hypervisor for Autonomous Agents - Multi-service image";
                 "org.opencontainers.image.version" = version;
               };
             };
           };
 
-          # Default package (core binaries)
-          default = pkgs.symlinkJoin {
-            name = "clawrden-${version}";
-            paths = [
-              self.packages.${system}.shim
-              self.packages.${system}.warden
-              self.packages.${system}.cli
-            ];
-          };
+          # Default package (all binaries)
+          default = clawrden-build;
         };
 
         devShells.default = pkgs.mkShell {

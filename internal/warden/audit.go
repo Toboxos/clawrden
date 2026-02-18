@@ -18,6 +18,7 @@ type AuditEntry struct {
 	Args             []string          `json:"args"`
 	Cwd              string            `json:"cwd"`
 	Identity         protocol.Identity `json:"identity"`
+	ContainerID      string            `json:"container_id,omitempty"`
 	Decision         string            `json:"decision"` // "allow", "deny", "ask"
 	ExitCode         int               `json:"exit_code,omitempty"`
 	Duration         float64           `json:"duration_ms,omitempty"`

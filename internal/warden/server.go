@@ -5,6 +5,7 @@ package warden
 
 import (
 	"clawrden/internal/executor"
+	"clawrden/internal/jailhouse"
 	"clawrden/pkg/protocol"
 	"context"
 	"fmt"
@@ -16,16 +17,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/docker/docker/client"
 )
 
 // Config holds the configuration for the Warden server.
 type Config struct {
-	SocketPath string
-	PolicyPath string
-	PrisonerID string
-	AuditPath  string
-	APIAddr    string
-	Logger     *log.Logger
+	SocketPath      string
+	PolicyPath      string
+	AuditPath       string
+	APIAddr         string
+	Logger          *log.Logger
+	JailhouseArmory string // Path to armory (default: /var/lib/clawrden/armory)
+	JailhouseRoot   string // Path to jailhouse root (default: /var/lib/clawrden/jailhouse)
+	JailhouseState  string // Path to state file (default: /var/lib/clawrden/jailhouse.state.json)
 }
 
 // Server is the Warden supervisor.
@@ -34,10 +39,17 @@ type Server struct {
 	listener net.Listener
 	policy   *PolicyEngine
 	hitl     *HITLQueue
-	executor executor.Executor
 	audit    *AuditLogger
 	api      *APIServer
 	logger   *log.Logger
+
+	// Executors: dockerExec for containerized requests, localExec for host/dev
+	dockerExec *executor.DockerExecutor // nil if Docker unavailable
+	localExec  *executor.LocalExecutor
+
+	// Jailhouse components
+	jailhouse     *jailhouse.Manager
+	policyWatcher *PolicyWatcher
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -57,15 +69,31 @@ func NewServer(cfg Config) (*Server, error) {
 		policy = DefaultPolicy()
 	}
 
-	// Create executor
-	exec, err := executor.New(executor.Config{
-		PrisonerContainerID: cfg.PrisonerID,
-		Logger:              cfg.Logger,
-	})
-	if err != nil {
-		// If Docker is not available, create a local executor for development
-		cfg.Logger.Printf("warning: docker executor unavailable: %v (using local executor)", err)
-		exec = executor.NewLocalExecutor(cfg.Logger)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	srv := &Server{
+		config: cfg,
+		policy: policy,
+		hitl:   NewHITLQueue(),
+		logger: cfg.Logger,
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	// Initialize jailhouse (always enabled)
+	if err := srv.initializeJailhouse(); err != nil {
+		// Jailhouse initialization failure is not fatal, but log it
+		cfg.Logger.Printf("warning: failed to initialize jailhouse: %v", err)
+	}
+
+	// Create executors — Docker for containerized requests, local as fallback
+	srv.localExec = executor.NewLocalExecutor(cfg.Logger)
+
+	dockerClient, dockerErr := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if dockerErr != nil {
+		cfg.Logger.Printf("warning: docker unavailable: %v (mirror execution disabled)", dockerErr)
+	} else {
+		srv.dockerExec = executor.NewDockerExecutor(dockerClient, cfg.Logger)
 	}
 
 	// Create audit logger
@@ -74,18 +102,7 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("create audit logger: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	srv := &Server{
-		config:   cfg,
-		policy:   policy,
-		hitl:     NewHITLQueue(),
-		executor: exec,
-		audit:    auditLogger,
-		logger:   cfg.Logger,
-		ctx:      ctx,
-		cancel:   cancel,
-	}
+	srv.audit = auditLogger
 
 	// Create HTTP API server if address is provided
 	if cfg.APIAddr != "" {
@@ -93,6 +110,75 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	return srv, nil
+}
+
+// initializeJailhouse sets up the jailhouse manager and creates jails from policy config.
+func (s *Server) initializeJailhouse() error {
+	// Set default paths if not specified
+	armoryPath := s.config.JailhouseArmory
+	if armoryPath == "" {
+		armoryPath = "/var/lib/clawrden/armory"
+	}
+
+	jailhousePath := s.config.JailhouseRoot
+	if jailhousePath == "" {
+		jailhousePath = "/var/lib/clawrden/jailhouse"
+	}
+
+	statePath := s.config.JailhouseState
+	if statePath == "" {
+		statePath = "/var/lib/clawrden/jailhouse.state.json"
+	}
+
+	// Create jailhouse manager
+	jailhouseMgr, err := jailhouse.NewManager(jailhouse.Config{
+		ArmoryPath:    armoryPath,
+		JailhousePath: jailhousePath,
+		StatePath:     statePath,
+		Logger:        s.logger,
+	})
+	if err != nil {
+		return fmt.Errorf("create jailhouse manager: %w", err)
+	}
+
+	// Start jailhouse manager
+	if err := jailhouseMgr.Start(); err != nil {
+		return fmt.Errorf("start jailhouse manager: %w", err)
+	}
+
+	s.jailhouse = jailhouseMgr
+
+	// Create jails from policy config
+	for jailID, cfg := range s.policy.GetJails() {
+		if _, err := s.jailhouse.GetJail(jailID); err == nil {
+			s.logger.Printf("jail %s already exists (from persisted state), skipping", jailID)
+			continue
+		}
+		if err := s.jailhouse.CreateJail(jailID, cfg.Commands, cfg.Hardened); err != nil {
+			s.logger.Printf("warning: failed to create jail %s: %v", jailID, err)
+		} else {
+			s.logger.Printf("created jail %s: %v", jailID, cfg.Commands)
+		}
+	}
+
+	// Create policy watcher for hot-reload
+	if s.config.PolicyPath != "" {
+		policyWatcher, err := NewPolicyWatcher(s.config.PolicyPath, s.policy, s.logger)
+		if err != nil {
+			s.logger.Printf("warning: failed to create policy watcher: %v (hot-reload disabled)", err)
+		} else {
+			s.policyWatcher = policyWatcher
+
+			// Register callback to update server's policy reference
+			s.policyWatcher.OnReload(func(newPolicy *PolicyEngine) {
+				s.policy = newPolicy
+				s.logger.Printf("server policy updated after hot-reload")
+			})
+		}
+	}
+
+	s.logger.Printf("jailhouse initialized (armory=%s, jailhouse=%s)", armoryPath, jailhousePath)
+	return nil
 }
 
 // ListenAndServe starts the Unix socket listener and accepts connections.
@@ -131,6 +217,17 @@ func (s *Server) ListenAndServe() error {
 		}()
 	}
 
+	// Start policy watcher if enabled
+	if s.policyWatcher != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			if err := s.policyWatcher.Start(s.ctx); err != nil {
+				s.logger.Printf("Policy watcher error: %v", err)
+			}
+		}()
+	}
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -157,6 +254,9 @@ func (s *Server) Shutdown() {
 	if s.api != nil {
 		s.api.Shutdown()
 	}
+	if s.policyWatcher != nil {
+		s.policyWatcher.Stop()
+	}
 	if s.listener != nil {
 		s.listener.Close()
 	}
@@ -173,6 +273,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 	connCtx, connCancel := context.WithCancel(s.ctx)
 	defer connCancel()
 
+	// Extract peer credentials (kernel-enforced, unfakeable)
+	peerCreds, peerErr := extractPeerCreds(conn)
+	if peerErr != nil {
+		s.logger.Printf("warning: could not extract peer credentials: %v", peerErr)
+		// Continue without peer creds — local/dev mode will still work
+	}
+
 	// Monitor for cancel frames from the shim
 	go s.monitorCancel(conn, connCancel)
 
@@ -183,16 +290,32 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	s.logger.Printf("request: %s %v (cwd=%s, uid=%d)",
-		req.Command, req.Args, req.Cwd, req.Identity.UID)
+	// Resolve container ID from peer credentials
+	if peerCreds != nil {
+		// Override self-reported identity with kernel-enforced values
+		req.Identity.UID = int(peerCreds.UID)
+		req.Identity.GID = int(peerCreds.GID)
+
+		// Resolve which container the peer process belongs to
+		containerID, resolveErr := resolveContainerID(peerCreds.PID)
+		if resolveErr != nil {
+			s.logger.Printf("warning: could not resolve container ID for pid %d: %v", peerCreds.PID, resolveErr)
+		} else if containerID != "" {
+			req.ContainerID = containerID
+		}
+	}
+
+	s.logger.Printf("request: %s %v (cwd=%s, uid=%d, container=%s)",
+		req.Command, req.Args, req.Cwd, req.Identity.UID, truncateID(req.ContainerID))
 
 	// Prepare audit entry
 	startTime := time.Now()
 	auditEntry := AuditEntry{
-		Command:  req.Command,
-		Args:     req.Args,
-		Cwd:      req.Cwd,
-		Identity: req.Identity,
+		Command:     req.Command,
+		Args:        req.Args,
+		Cwd:         req.Cwd,
+		Identity:    req.Identity,
+		ContainerID: req.ContainerID,
 	}
 
 	// Validate path security boundary using policy
@@ -247,7 +370,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 		defer execCancel()
 	}
 
-	execErr := s.executor.Execute(execCtx, req, conn)
+	// Select executor: Docker mirror for containerized requests, local for host/dev
+	var exec executor.Executor
+	if req.ContainerID != "" && s.dockerExec != nil {
+		exec = s.dockerExec
+	} else {
+		exec = s.localExec
+	}
+
+	execErr := exec.Execute(execCtx, req, conn)
 
 	// Calculate duration and update audit entry
 	auditEntry.Duration = float64(time.Since(startTime).Milliseconds())
@@ -281,12 +412,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 }
 
 // monitorCancel watches for cancel frames from the shim.
-// This runs in a separate goroutine reading from a buffered copy of the connection,
-// but in practice the shim only sends cancel frames after the initial request.
 func (s *Server) monitorCancel(conn net.Conn, cancel context.CancelFunc) {
-	// This is a simplified version. In a production system, we'd multiplex
-	// the connection to separate reads between the main handler and this monitor.
-	// For now, cancellation is handled via connection close detection.
 	buf := make([]byte, 1)
 	for {
 		_, err := conn.Read(buf)
@@ -303,4 +429,20 @@ func (s *Server) monitorCancel(conn net.Conn, cancel context.CancelFunc) {
 // GetHITLQueue returns the HITL queue for external access (e.g., from a web UI).
 func (s *Server) GetHITLQueue() *HITLQueue {
 	return s.hitl
+}
+
+// GetJailhouse returns the jailhouse manager for external access (e.g., from the API).
+func (s *Server) GetJailhouse() *jailhouse.Manager {
+	return s.jailhouse
+}
+
+// truncateID returns the first 12 characters of a container ID, or "(host)" if empty.
+func truncateID(id string) string {
+	if id == "" {
+		return "(host)"
+	}
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }

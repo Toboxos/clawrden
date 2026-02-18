@@ -36,11 +36,15 @@ type Identity struct {
 
 // Request is the JSON payload sent from the Shim to the Warden.
 type Request struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Cwd     string   `json:"cwd"`
-	Env     []string `json:"env"`
+	Command  string   `json:"command"`
+	Args     []string `json:"args"`
+	Cwd      string   `json:"cwd"`
+	Env      []string `json:"env"`
 	Identity Identity `json:"identity"`
+
+	// ContainerID is set server-side from peer credentials (not sent by shim).
+	// It identifies the originating container for mirror execution.
+	ContainerID string `json:"-"`
 }
 
 // Frame represents a single chunk of streamed output or control data.

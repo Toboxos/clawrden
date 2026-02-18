@@ -13,32 +13,33 @@ import (
 )
 
 // DockerExecutor uses the Docker SDK to execute commands.
-// It supports both Mirror (exec in prisoner) and Ghost (ephemeral container) modes.
+// It supports both Mirror (exec in originating container) and Ghost (ephemeral container) modes.
+// The target container ID is provided per-request via req.ContainerID.
 type DockerExecutor struct {
-	client      *client.Client
-	prisonerID  string
-	logger      *log.Logger
+	client *client.Client
+	logger *log.Logger
 }
 
 // NewDockerExecutor creates a Docker-based executor.
-func NewDockerExecutor(cfg Config) (*DockerExecutor, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("create docker client: %w", err)
-	}
-
+// The executor does not hold a fixed container ID; it reads the target
+// container from each request's ContainerID field (set by peer credential resolution).
+func NewDockerExecutor(dockerClient *client.Client, logger *log.Logger) *DockerExecutor {
 	return &DockerExecutor{
-		client:     cli,
-		prisonerID: cfg.PrisonerContainerID,
-		logger:     cfg.Logger,
-	}, nil
+		client: dockerClient,
+		logger: logger,
+	}
 }
 
-// Execute runs a command using the Mirror strategy (exec back in the prisoner container).
+// Execute runs a command using the Mirror strategy (exec back in the originating container).
 // For commands requiring external tools, it falls back to Ghost strategy.
+// The target container is identified by req.ContainerID.
 func (de *DockerExecutor) Execute(ctx context.Context, req *protocol.Request, conn net.Conn) error {
 	if err := ValidatePath(req.Cwd); err != nil {
 		return err
+	}
+
+	if req.ContainerID == "" {
+		return fmt.Errorf("no container ID on request (cannot mirror)")
 	}
 
 	// Determine execution strategy
@@ -65,10 +66,13 @@ func (de *DockerExecutor) shouldUseGhost(command string) bool {
 
 // executeMirror runs the command back inside the Prisoner container.
 func (de *DockerExecutor) executeMirror(ctx context.Context, req *protocol.Request, conn net.Conn) error {
-	de.logger.Printf("mirror exec: %s %v in container %s", req.Command, req.Args, de.prisonerID)
+	de.logger.Printf("mirror exec: %s %v in container %s", req.Command, req.Args, req.ContainerID)
 
 	// Build the full command
 	cmd := append([]string{req.Command}, req.Args...)
+
+	// Determine the user to run as
+	user := fmt.Sprintf("%d:%d", req.Identity.UID, req.Identity.GID)
 
 	// Create exec configuration with UID/GID impersonation
 	execConfig := container.ExecOptions{
@@ -77,11 +81,11 @@ func (de *DockerExecutor) executeMirror(ctx context.Context, req *protocol.Reque
 		Env:          req.Env,
 		AttachStdout: true,
 		AttachStderr: true,
-		User:         fmt.Sprintf("%d:%d", req.Identity.UID, req.Identity.GID),
+		User:         user,
 	}
 
 	// Create the exec instance
-	execID, err := de.client.ContainerExecCreate(ctx, de.prisonerID, execConfig)
+	execID, err := de.client.ContainerExecCreate(ctx, req.ContainerID, execConfig)
 	if err != nil {
 		return fmt.Errorf("create exec: %w", err)
 	}
@@ -229,7 +233,7 @@ func (de *DockerExecutor) fixOwnership(ctx context.Context, req *protocol.Reques
 		Cmd: cmd,
 	}
 
-	execID, err := de.client.ContainerExecCreate(ctx, de.prisonerID, execConfig)
+	execID, err := de.client.ContainerExecCreate(ctx, req.ContainerID, execConfig)
 	if err != nil {
 		de.logger.Printf("chown exec create error: %v", err)
 		return

@@ -1,579 +1,401 @@
-# 🛡️ Clawrden
+# Clawrden
 
-**The Hypervisor for Autonomous AI Agents**
+**The Hypervisor for Autonomous Agents**
 
-Clawrden is a sidecar-based governance architecture that operationalizes "wild" autonomous AI agents (like AutoGPT, OpenDevin) within a Zero Trust environment. It intercepts agent actions at the binary level, routes them through a privileged supervisor for policy checks and human-in-the-loop (HITL) approval, then executes them safely.
+A sidecar-based governance architecture that intercepts AI agent actions at the binary level for policy enforcement and human oversight.
 
-## Core Concepts
-
-- **Zero Trust**: The Agent (the "Prisoner") is treated as untrusted/compromised
-- **Transparent Interception**: Agents believe they're running local commands; actually triggering RPCs
-- **Hot-Pluggable Capabilities**: Tools injected dynamically via volume mounts without restarts
-- **Universal Compatibility**: Static Go binaries work with any Linux container (Alpine, Ubuntu, Distroless)
+[![Tests](https://img.shields.io/badge/tests-22%2F22%20passing-brightgreen)]()
+[![Go](https://img.shields.io/badge/go-1.21+-blue)]()
+[![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 ## Quick Start
 
-### Prerequisites
-
-- **Nix** (recommended) or **Go 1.21+**
-- **Docker** (optional, for full functionality)
-- **Linux** or **WSL2**
-
-### Build All Binaries
-
 ```bash
-# Using Nix (recommended)
-nix develop
+# Build all binaries
 make build
 
-# Or with Go directly
-go mod download
-make build
-```
+# Or using Nix
+nix build
 
-This creates three binaries in `bin/`:
-- `clawrden-shim` (2.4MB) - Universal command interceptor
-- `clawrden-warden` (12MB) - Supervisor server
-- `clawrden-cli` (8.4MB) - Control interface
-
-### Run a Simple Example
-
-**Terminal 1: Start the Warden**
-
-```bash
+# Start the warden
 ./bin/clawrden-warden \
-  --socket /tmp/warden.sock \
+  --socket /var/run/clawrden/warden.sock \
   --policy policy.yaml \
-  --audit /tmp/audit.log \
+  --audit /var/log/clawrden/audit.log \
   --api :8080
-```
 
-**Terminal 2: Open Web Dashboard**
+# In another terminal, check status
+./bin/clawrden-cli status
 
-```bash
-# Open in your browser
-open http://localhost:8080
-
-# Or use the CLI
-./bin/clawrden-cli --api http://localhost:8080 status
-./bin/clawrden-cli history
+# View pending approvals
 ./bin/clawrden-cli queue
 ```
 
-The web dashboard provides:
-- 📊 Real-time status monitoring
-- ✅ One-click approve/deny for pending requests
-- 📜 Command history with filtering
-- 🔄 Auto-refresh (2s intervals)
+## What is Clawrden?
 
-**Terminal 3: Simulate Agent Commands**
+Clawrden operates on a **Zero Trust** model: autonomous agents are treated as untrusted entities. Every command they attempt is intercepted, evaluated against policy, and optionally queued for human approval before execution.
 
-```bash
-# In a real deployment, the shim binary would be in the agent's PATH.
-# For testing, we can manually test the socket communication.
+### How It Works
 
-# Test an allowed command (will execute immediately)
-echo '{"command":"echo","args":["hello"],"cwd":"/tmp","env":[],"identity":{"uid":1000,"gid":1000}}' | \
-  nc -U /tmp/warden.sock
-
-# Check the audit log
-./bin/clawrden-cli history
 ```
-
-## Nix Flake Support
-
-Clawrden provides a comprehensive Nix flake for reproducible builds and deployments.
-
-### Available Packages
-
-```bash
-# Build specific packages
-nix build .#shim          # Universal shim binary (2.4MB, static)
-nix build .#warden        # Warden server
-nix build .#cli           # CLI tool
-nix build .#slack-bridge  # Slack notification bridge
-nix build .#telegram-bridge  # Telegram notification bridge
-nix build .#warden-docker # Docker image tarball
-
-# Build all core binaries
-nix build
-
-# Run binaries directly without installing
-nix run .#warden -- --help
-nix run .#cli -- status
+Agent runs: npm install express
+      ↓
+Shim intercepts (symlink: /clawrden/bin/npm → shim)
+      ↓
+Socket RPC to Warden
+      ↓
+Policy Engine evaluates (allow / deny / ask)
+      ↓
+If approved: Execute & stream output back
+      ↓
+Agent receives stdout/stderr/exit code
 ```
-
-### Docker Image from Nix
-
-```bash
-# Build and load warden Docker image
-nix build .#warden-docker
-docker load < result
-```
-
-**See [NIX.md](./NIX.md) for complete Nix flake documentation including:**
-- Development shell usage
-- CI/CD integration examples
-- Binary cache setup
-- Comparison with Makefile targets
-- Troubleshooting guide
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│          Prisoner Container             │
-│        (Untrusted AI Agent)            │
-│                                         │
-│  /clawrden/bin/  (shim binaries)       │
-│    ├─ npm        → clawrden-shim       │
-│    ├─ docker     → clawrden-shim       │
-│    └─ kubectl    → clawrden-shim       │
-│                                         │
-│  Agent code runs normally...           │
-│  When it calls 'npm install':          │
-│    1. Shim intercepts the call         │
-│    2. Sends request over Unix socket   │
-│    3. Waits for response                │
-└─────────────────────────────────────────┘
-                    │
-              Unix Socket
-              /var/run/clawrden/warden.sock
-                    │
-                    ▼
-┌─────────────────────────────────────────┐
-│         Warden Container                │
-│      (Privileged Supervisor)            │
-│                                         │
-│  ┌─────────────────────────────┐       │
-│  │    Policy Engine             │       │
-│  │  • Allow / Deny / Ask        │       │
-│  │  • Pattern matching          │       │
-│  └─────────────────────────────┘       │
-│                │                        │
-│                ▼                        │
-│  ┌─────────────────────────────┐       │
-│  │    HITL Queue                │       │
-│  │  • Pending approvals         │       │
-│  │  • Human oversight           │       │
-│  └─────────────────────────────┘       │
-│                │                        │
-│                ▼                        │
-│  ┌─────────────────────────────┐       │
-│  │    Executor                  │       │
-│  │  • Mirror: exec in prisoner  │       │
-│  │  • Ghost: ephemeral container│       │
-│  │  • Local: dev/test mode      │       │
-│  └─────────────────────────────┘       │
-│                                         │
-│  HTTP API: :8080                        │
-│    • /api/status                        │
-│    • /api/queue                         │
-│    • /api/history                       │
-└─────────────────────────────────────────┘
-                    ▲
-                    │
-                HTTP/JSON
-                    │
-┌─────────────────────────────────────────┐
-│          Control Interfaces             │
-│                                         │
-│  • clawrden-cli (terminal)             │
-│  • Web Dashboard (browser)              │
-│  • API clients (programmatic)           │
-└─────────────────────────────────────────┘
+┌──────────────────────┐     Unix Socket     ┌──────────────────────┐
+│   The Prisoner       │ ◄──────────────────► │   The Warden         │
+│   (Agent Container)  │   JSON + Frames     │   (Supervisor)       │
+│                      │                     │                      │
+│  ┌──────────────┐    │                     │  ┌──────────────┐    │
+│  │ Clawrden     │    │                     │  │ Socket       │    │
+│  │ Shim Binary  │────┼─────────────────────┼──│ Server       │    │
+│  │ (2.4MB)      │    │                     │  └──────┬───────┘    │
+│  └──────────────┘    │                     │         │            │
+│                      │                     │  ┌──────▼───────┐    │
+│  /clawrden/bin/      │                     │  │ Policy       │    │
+│   ├── npm → shim     │                     │  │ Engine       │    │
+│   ├── docker → shim  │                     │  └──────┬───────┘    │
+│   └── pip → shim     │                     │         │            │
+│                      │                     │  ┌──────▼───────┐    │
+│  No internet ✗       │                     │  │ Executor     │    │
+│  No Docker socket ✗  │                     │  │ & Audit Log  │    │
+└──────────────────────┘                     │  └──────────────┘    │
+                                             │                      │
+                                             │  Docker Socket ✓     │
+                                             │  Internet Access ✓   │
+                                             └──────────────────────┘
 ```
 
-## How It Works
+## Key Features
 
-### 1. The Universal Shim
+- **Binary Interception**: Static Go shim (2.4MB) replaces standard tools
+- **Policy Engine**: YAML-based rules (allow/deny/ask)
+- **Human-in-the-Loop**: Queue commands for approval before execution
+- **Audit Trail**: JSON-lines log of every command with full metadata
+- **HTTP API**: RESTful interface for automation (port 8080)
+- **CLI Tool**: Command-line control interface
+- **Zero Trust**: Agent treated as compromised by default
+- **Path Validation**: Commands restricted to `/app` workspace
+- **Jail Management**: Define jails in `policy.yaml`, manage via API/CLI
 
-A single static Go binary that impersonates multiple tools:
+## Jail Management
+
+Jails define which commands are intercepted for each agent container. Define them in `policy.yaml`, and the warden creates shim directories on startup.
+
+### 1. Define Jails in Policy
+
+```yaml
+# policy.yaml
+jails:
+  my-agent:
+    commands: [ls, cat, npm, docker, kubectl]
+    hardened: true
+  python-agent:
+    commands: [ls, cat, pip, python]
+    hardened: false
+```
+
+### 2. Mount Jails in Docker Compose
+
+```yaml
+# docker-compose.yml
+prisoner1:
+  volumes:
+    - jailhouse-data:/var/lib/clawrden:ro  # Jail shim directory
+    - socket-dir:/var/run/clawrden         # Warden socket
+  environment:
+    # PATH includes the jail's bin dir so shim symlinks take precedence
+    - PATH=/var/lib/clawrden/jailhouse/my-agent/bin:/usr/local/bin:/usr/bin:/bin
+    - CLAWRDEN_SOCKET=/var/run/clawrden/warden.sock
+```
+
+### 3. Manage via CLI
 
 ```bash
-# These are all the SAME binary, just with different names:
-/clawrden/bin/npm      -> clawrden-shim
-/clawrden/bin/docker   -> clawrden-shim
-/clawrden/bin/kubectl  -> clawrden-shim
+# List all jails
+clawrden-cli jails
+
+# Create a new jail
+clawrden-cli jails create my-jail --commands=ls,npm,docker --hardened
+
+# View jail details
+clawrden-cli jails get my-jail
+
+# Delete a jail
+clawrden-cli jails delete my-jail
 ```
 
-When executed, the shim:
-1. Detects which tool it's pretending to be (from `os.Args[0]`)
-2. Captures the command, args, cwd, environment, UID/GID
-3. Serializes to JSON and sends over Unix socket to warden
-4. Streams back stdout/stderr/exit code
+### 4. Manage via API
 
-### 2. The Warden
+```bash
+# List jails
+curl http://localhost:8080/api/jails
 
-Receives requests and enforces policy:
+# Create a jail
+curl -X POST http://localhost:8080/api/jails \
+  -H 'Content-Type: application/json' \
+  -d '{"jail_id":"my-jail","commands":["ls","npm"],"hardened":false}'
 
-**Policy Example** (`policy.yaml`):
+# Get jail details
+curl http://localhost:8080/api/jails/my-jail
+
+# Delete a jail
+curl -X DELETE http://localhost:8080/api/jails/my-jail
+```
+
+## Components
+
+| Component | Description | Size |
+|-----------|-------------|------|
+| **clawrden-shim** | Universal command interceptor | 2.4MB |
+| **clawrden-warden** | Policy engine & supervisor | 12MB |
+| **clawrden-cli** | Control interface | 8.4MB |
+| **slack-bridge** | Slack HITL integration | 8MB |
+| **telegram-bridge** | Telegram HITL integration | 8MB |
+
+## Policy Configuration
+
+Create a `policy.yaml` file:
+
 ```yaml
 default_action: deny
 
+allowed_paths:
+  - "/app/*"
+  - "/tmp/*"
+
+jails:
+  my-agent:
+    commands: [ls, cat, npm, docker, kubectl]
+    hardened: true
+
 rules:
-  # Safe read-only commands - auto-allow
   - command: ls
     action: allow
-  - command: cat
-    action: allow
-  - command: grep
-    action: allow
 
-  # Potentially dangerous - require human approval
   - command: npm
-    action: ask
-
-  # Destructive - always deny
-  - command: rm
-    action: deny
-    patterns:
-      - "-rf"
-```
-
-**Actions:**
-- `allow`: Execute immediately
-- `deny`: Reject immediately
-- `ask`: Queue for human approval (HITL)
-
-### 3. Execution Strategies
-
-#### Mirror Mode (Safe Commands)
-Executes command **back inside the prisoner container**:
-```bash
-Agent calls: ls /app
-  → Warden receives request
-  → Warden validates: "ls" is allowed
-  → Warden runs: docker exec <prisoner> ls /app
-  → Streams output back to agent
-```
-
-#### Ghost Mode (Heavy Tools)
-Spins up **temporary container** with the required tool:
-```bash
-Agent calls: npm install express
-  → Warden receives request
-  → Human approves via HITL
-  → Warden runs: docker run --rm -v app:/app node:18 npm install express
-  → Fixes file ownership (chown to agent's UID/GID)
-  → Streams output back to agent
-```
-
-## Configuration
-
-### Policy File (`policy.yaml`)
-
-```yaml
-# Default action for unknown commands
-default_action: deny
-
-# Path restrictions - glob patterns for allowed directories
-allowed_paths:
-  - "/app/*"                  # Allow anything under /app
-  - "/tmp/*"                  # Allow /tmp for testing
-  - "/home/*/workspace/*"     # Allow user workspaces
-
-# Command rules
-rules:
-  # Pattern 1: Simple allow/deny
-  - command: echo
-    action: allow
-
-  # Pattern 2: Ask for approval
-  - command: npm
-    action: ask
-
-  # Pattern 3: Deny specific patterns
-  - command: rm
-    action: deny
-    patterns:
-      - "-rf"
-      - "-fr"
-
-  # Pattern 4: Allow with specific args
-  - command: apt-get
     action: ask
     patterns:
       - "install*"
+
+  - command: sudo
+    action: deny
 ```
 
-### Warden Command-Line Flags
+**Actions:**
+- `allow` - Execute immediately (safe commands)
+- `deny` - Block immediately (dangerous commands)
+- `ask` - Queue for human approval (risky commands)
 
-```bash
-./bin/clawrden-warden --help
-  --socket string      Unix socket path (default: /var/run/clawrden/warden.sock)
-  --policy string      Policy file path (default: policy.yaml)
-  --prisoner-id string Docker container ID of prisoner
-  --audit string       Audit log path (default: /var/log/clawrden/audit.log)
-  --api string         HTTP API address (default: :8080)
-```
+See [docs/policy-configuration.md](docs/policy-configuration.md) for details.
 
-### CLI Command-Line Flags
+## Docker Deployment
 
-```bash
-./bin/clawrden-cli --help
-  --api string  Warden API URL (default: http://localhost:8080)
-
-Commands:
-  status           Show warden status
-  queue            List pending HITL requests
-  approve <id>     Approve pending request
-  deny <id>        Deny pending request
-  history          View command audit log
-  kill             Trigger kill switch
-```
-
-## Development
-
-### Project Structure
-
-```
-clawrden/
-├── cmd/
-│   ├── shim/           # Universal command interceptor
-│   ├── warden/         # Supervisor server
-│   └── cli/            # Control CLI
-├── internal/
-│   ├── shim/           # Shim logic & signal handling
-│   ├── warden/         # Server, policy, HITL, audit, API
-│   └── executor/       # Docker & local execution strategies
-├── pkg/
-│   └── protocol/       # Shared socket protocol (JSON framing)
-├── tests/
-│   └── integration/    # End-to-end tests
-├── docker/             # Container definitions
-├── scripts/            # Installation scripts
-└── docs/               # Additional documentation
-```
-
-### Run Tests
-
-```bash
-# All tests
-make test
-
-# Integration tests only
-make integration-test
-
-# Specific package
-go test ./internal/warden -v
-```
-
-**Current Test Coverage:** 22/22 tests passing ✅
-
-### Build System
-
-```bash
-make build           # Build all binaries
-make build-shim      # Build shim only (static)
-make build-warden    # Build warden only
-make build-cli       # Build CLI only
-make test            # Run all tests
-make integration-test # Run integration tests
-make clean           # Remove build artifacts
-```
-
-### Development Environment
-
-**Using Nix (recommended):**
-```bash
-nix develop
-# Provides: go, docker, docker-compose, make, etc.
-```
-
-**Using Go directly:**
-```bash
-go version  # Requires 1.21+
-go mod download
-make build
-```
-
-## HTTP API Reference
-
-All endpoints return JSON.
-
-### `GET /api/status`
-Returns warden health and statistics.
-
-**Response:**
-```json
-{
-  "status": "running",
-  "pending_count": 2,
-  "uptime": 3600.5
-}
-```
-
-### `GET /api/queue`
-Lists pending HITL approval requests.
-
-**Response:**
-```json
-[
-  {
-    "id": "abc123",
-    "command": "npm",
-    "args": ["install", "express"],
-    "cwd": "/app",
-    "identity": {"uid": 1000, "gid": 1000}
-  }
-]
-```
-
-### `POST /api/queue/{id}/approve`
-Approves a pending request.
-
-**Response:**
-```json
-{"status": "approved"}
-```
-
-### `POST /api/queue/{id}/deny`
-Denies a pending request.
-
-**Response:**
-```json
-{"status": "denied"}
-```
-
-### `GET /api/history`
-Returns the complete audit log.
-
-**Response:**
-```json
-[
-  {
-    "timestamp": "2026-02-17T01:23:45.123456Z",
-    "command": "npm",
-    "args": ["install", "express"],
-    "cwd": "/app",
-    "identity": {"uid": 1000, "gid": 1000},
-    "decision": "allow (after HITL)",
-    "exit_code": 0,
-    "duration_ms": 5432.1
-  }
-]
-```
-
-### `POST /api/kill`
-Triggers the kill switch (pauses/kills prisoner).
-
-**Response:**
-```json
-{
-  "status": "acknowledged",
-  "message": "Kill switch activated"
-}
-```
-
-## Audit Log
-
-All commands are logged in JSON-lines format to the audit file:
-
-```bash
-tail -f /tmp/audit.log | jq .
-```
-
-**Example Entry:**
-```json
-{
-  "timestamp": "2026-02-17T01:23:45.123456789Z",
-  "command": "npm",
-  "args": ["install", "express"],
-  "cwd": "/app",
-  "identity": {"uid": 1000, "gid": 1000},
-  "decision": "allow (after HITL)",
-  "exit_code": 0,
-  "duration_ms": 5432.1
-}
-```
-
-## Docker Compose Example
+### Option 1: Separate Containers (Production)
 
 ```bash
 docker-compose up
 ```
 
-This spins up:
-- **Warden**: Privileged supervisor with Docker socket access
-- **Prisoner**: Minimal container with shim binaries pre-installed
+Runs warden, slack-bridge, and telegram-bridge as separate containers.
 
-**Note:** Docker Compose integration is currently in development.
+### Option 2: All-in-One (Development)
 
-## Security Considerations
-
-### Path Validation
-Commands are restricted to `/app` directory (configurable):
-```go
-if !strings.HasPrefix(req.Cwd, "/app") {
-    return "denied: outside security boundary"
-}
+```bash
+docker run -v /var/run/clawrden:/var/run/clawrden \
+  clawrden-warden:latest warden slack telegram
 ```
 
-### Environment Scrubbing
-Dangerous environment variables are filtered:
-- `LD_PRELOAD` (library injection)
-- `DOCKER_HOST` (Docker hijacking)
-- `KUBECONFIG` (Kubernetes access)
+Single container runs all services.
 
-### Identity Preservation
-Commands execute with the **original UID/GID** from the prisoner to prevent privilege escalation.
+### Build Docker Image
 
-### Audit Trail
-Every command is logged with full context for security analysis.
+```bash
+# Using Nix
+nix build .#warden-docker
+docker load < result
 
-## Use Cases
+# Or using Docker Compose
+docker-compose build
+```
 
-### 1. AI Agent Sandboxing
-Run AutoGPT/OpenDevin safely with human oversight on dangerous operations.
+## CLI Commands
 
-### 2. CI/CD Pipeline Safety
-Require approval before deployment commands execute.
+```bash
+# View warden status
+clawrden-cli status
 
-### 3. Multi-Tenant Environments
-Isolate tenant operations with policy enforcement.
+# List pending approvals
+clawrden-cli queue
 
-### 4. Development Environment Control
-Allow devs to work freely but require approval for production access.
+# Approve a command
+clawrden-cli approve <request-id>
 
-## Roadmap
+# Deny a command
+clawrden-cli deny <request-id>
 
-- [x] Phase 1: Core Infrastructure
-  - [x] Universal shim binary
-  - [x] Warden server with policy engine
-  - [x] Mirror/Ghost execution strategies
+# View command history
+clawrden-cli history
 
-- [x] Phase 2: Integration & Control (4/6)
-  - [x] Integration testing
-  - [x] Audit logging
-  - [x] HTTP API
-  - [x] CLI tool
-  - [ ] Timeout enforcement
-  - [ ] Ghost image configuration
+# Emergency stop
+clawrden-cli kill
 
-- [ ] Phase 3: Production Readiness
-  - [x] Web dashboard
-  - [ ] Docker Compose validation
-  - [ ] Multi-distro testing
-  - [ ] Metrics/monitoring
-  - [ ] Chat integrations (Slack/Telegram)
+# Jail management
+clawrden-cli jails                  # List all jails
+clawrden-cli jails create <id>     # Create a jail
+clawrden-cli jails get <id>        # Show jail details
+clawrden-cli jails delete <id>     # Delete a jail
+```
+
+## API Endpoints
+
+```
+GET    /api/status         - Warden health check
+GET    /api/queue          - List pending approvals
+POST   /api/queue/:id/:action - Approve/deny a request
+GET    /api/history        - View audit log
+POST   /api/kill           - Emergency stop
+GET    /api/jails          - List all jails
+POST   /api/jails          - Create a jail
+GET    /api/jails/:id      - Get jail details
+DELETE /api/jails/:id      - Delete a jail
+```
+
+## Chat Integrations
+
+Approve commands from Slack or Telegram:
+
+```bash
+# Start chat bridges
+./bin/slack-bridge --warden-url http://localhost:8080
+./bin/telegram-bridge --warden-url http://localhost:8080
+```
+
+See [docs/chat-integration.md](docs/chat-integration.md) for setup instructions.
+
+## Development
+
+### Prerequisites
+
+- Go 1.21+
+- Make
+- Docker (optional)
+- Nix (optional but recommended)
+
+### Build
+
+```bash
+# Using Make (Makefile is source of truth)
+make build           # Core binaries
+make build-all       # Core + bridges
+make test            # Run tests
+make integration-test # Integration tests only
+
+# Using Nix (delegates to Make)
+nix develop          # Enter dev shell
+nix build            # Build all
+nix build .#warden   # Build specific package
+```
+
+### Test
+
+```bash
+# All tests
+go test ./...
+
+# Integration tests only
+go test ./tests/integration -v
+
+# Specific package
+go test ./internal/warden -v
+```
+
+### Project Structure
+
+```
+clawrden/
+├── cmd/                    # Entry points
+│   ├── shim/              # Command interceptor
+│   ├── warden/            # Supervisor server
+│   ├── cli/               # Control CLI
+│   ├── slack-bridge/      # Slack integration
+│   └── telegram-bridge/   # Telegram integration
+├── internal/
+│   ├── shim/              # Shim logic
+│   ├── warden/            # Policy, HITL, audit, API
+│   ├── executor/          # Execution strategies
+│   └── jailhouse/         # Jail filesystem management
+├── pkg/
+│   └── protocol/          # Socket protocol
+├── tests/
+│   └── integration/       # E2E tests
+├── docs/                  # Documentation
+├── Makefile              # Build system (source of truth)
+├── flake.nix             # Nix builds (delegates to Make)
+├── policy.yaml           # Example policy
+└── docker-compose.yml    # Multi-service deployment
+```
+
+## Security Model
+
+- **Zero Trust**: Agent assumed compromised
+- **Path Boundary**: All operations restricted to `/app`
+- **Environment Scrubbing**: Dangerous variables filtered (LD_PRELOAD, DOCKER_HOST)
+- **Identity Preservation**: UID/GID passed through
+- **Binary Locking**: Original tools renamed to prevent bypass
+- **Audit Trail**: Every command logged with full context
+
+## Status
+
+**Phase 2 Complete**:
+- Core infrastructure (shim, warden, policy, HITL)
+- Integration tests
+- Audit logging
+- HTTP API + CLI tool
+- Chat bridges (Slack, Telegram)
+- Jail management (explicit config, API, CLI)
+
+**Next:** Production hardening, metrics, Docker validation
+
+See [ROADMAP.md](ROADMAP.md) for detailed roadmap.
+
+## Documentation
+
+- [Architecture](docs/architecture.md) - System design and data flow
+- [Policy Configuration](docs/policy-configuration.md) - YAML policy guide
+- [Chat Integration](docs/chat-integration.md) - Slack/Telegram setup
+- [Nix Usage](NIX.md) - Nix flake reference
 
 ## Contributing
 
-Contributions welcome! Please:
-1. Read `docs/architecture.md`
-2. Run tests: `make test`
-3. Follow existing code style
-4. Add tests for new features
+Contributions welcome! Please ensure:
+- All tests pass (`make test`)
+- Code is formatted (`go fmt`)
+- Commit messages are descriptive
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT License - See LICENSE file for details.
 
-## Acknowledgments
+## Related Work
 
-Inspired by the need to safely operationalize autonomous AI agents in production environments.
+- [gVisor](https://gvisor.dev/) - Application kernel for containers
+- [Falco](https://falco.org/) - Cloud-native runtime security
+- [OPA](https://www.openpolicyagent.org/) - Policy-based control
+- [Teleport](https://goteleport.com/) - Access plane for infrastructure
 
 ---
 
-**Built with Go, Docker, and Zero Trust principles** 🛡️
+**Built for the age of autonomous agents. Stay in control.**

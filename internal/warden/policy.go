@@ -33,12 +33,19 @@ type Rule struct {
 	Timeout time.Duration `yaml:"timeout,omitempty"` // Optional: per-command timeout (e.g., "300s", "5m")
 }
 
+// JailConfig defines a jail's intercepted commands and hardening mode.
+type JailConfig struct {
+	Commands []string `yaml:"commands"`
+	Hardened bool     `yaml:"hardened"`
+}
+
 // PolicyConfig is the top-level policy configuration.
 type PolicyConfig struct {
-	DefaultAction  Action        `yaml:"default_action"`
-	DefaultTimeout time.Duration `yaml:"default_timeout,omitempty"` // Default timeout for all commands
-	AllowedPaths   []string      `yaml:"allowed_paths,omitempty"`
-	Rules          []Rule        `yaml:"rules"`
+	DefaultAction  Action                `yaml:"default_action"`
+	DefaultTimeout time.Duration         `yaml:"default_timeout,omitempty"` // Default timeout for all commands
+	AllowedPaths   []string              `yaml:"allowed_paths,omitempty"`
+	Jails          map[string]JailConfig `yaml:"jails,omitempty"`
+	Rules          []Rule                `yaml:"rules"`
 }
 
 // PolicyEngine evaluates commands against a set of rules.
@@ -211,4 +218,19 @@ func (pe *PolicyEngine) ValidatePath(path string) error {
 	}
 
 	return fmt.Errorf("path %q not allowed by policy (allowed patterns: %v)", path, pe.config.AllowedPaths)
+}
+
+// HasRule checks if the policy has any rule defined for a command.
+func (pe *PolicyEngine) HasRule(command string) bool {
+	for _, rule := range pe.config.Rules {
+		if matchCommand(rule.Command, command) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetJails returns the jail configurations from the policy.
+func (pe *PolicyEngine) GetJails() map[string]JailConfig {
+	return pe.config.Jails
 }
